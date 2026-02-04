@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     environment: str = Field(default="development")
     debug: bool = Field(default=False)
 
+    database_url: str = Field(default="sqlite:///./app.db")
+
     api_v1_prefix: str = Field(default="/api/v1")
 
     docs_enabled: bool = Field(default=True)
