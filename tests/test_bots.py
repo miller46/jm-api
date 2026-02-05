@@ -1,77 +1,11 @@
 """Tests for Bot read API endpoints."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-import pytest
-import sqlalchemy as sa
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from jm_api.db.base import Base
-from jm_api.models.bot import Bot
-
-
-@pytest.fixture
-def db_engine():
-    """Create in-memory SQLite engine for test isolation."""
-    engine = sa.create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=sa.pool.StaticPool,
-    )
-    Base.metadata.create_all(engine)
-    yield engine
-    engine.dispose()
-
-
-@pytest.fixture
-def db_session(db_engine) -> Session:
-    """Create database session from test engine."""
-    session = Session(db_engine)
-    yield session
-    session.close()
-
-
-@pytest.fixture
-def app(db_session: Session) -> FastAPI:
-    """Create test app with overridden database dependency."""
-    from jm_api.app import create_app
-    from jm_api.db.session import get_db
-
-    app = create_app()
-
-    def override_get_db():
-        yield db_session
-
-    app.dependency_overrides[get_db] = override_get_db
-    return app
-
-
-@pytest.fixture
-def client(app: FastAPI) -> TestClient:
-    """Create test client."""
-    return TestClient(app)
-
-
-def create_bot(
-    session: Session,
-    rig_id: str = "rig-001",
-    kill_switch: bool = False,
-    last_run_log: str | None = None,
-    last_run_at: datetime | None = None,
-) -> Bot:
-    """Helper to create and persist a bot."""
-    bot = Bot(
-        rig_id=rig_id,
-        kill_switch=kill_switch,
-        last_run_log=last_run_log,
-        last_run_at=last_run_at,
-    )
-    session.add(bot)
-    session.commit()
-    session.refresh(bot)
-    return bot
+from conftest import create_bot
 
 
 # --- List Endpoint Tests ---
@@ -326,95 +260,107 @@ class TestListBotsFilters:
 
 
 class TestListBotsDateFilters:
-    """Test date range filtering."""
+    """Test date range filtering with explicit timestamps."""
 
     def test_filter_create_at_after(
         self, client: TestClient, db_session: Session
     ) -> None:
-        """Filter by create_at_after returns bots at or after timestamp."""
-        # Arrange
-        create_bot(db_session, rig_id="rig-001")
-        bot2 = create_bot(db_session, rig_id="rig-002")
+        """Filter by create_at_after excludes bots created before cutoff."""
+        # Arrange - use explicit timestamps for deterministic testing
+        old_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        new_time = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        cutoff = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        # Act - use bot2's create_at as the cutoff (should include bot2)
+        create_bot(db_session, rig_id="rig-old", create_at=old_time)
+        create_bot(db_session, rig_id="rig-new", create_at=new_time)
+
+        # Act
         response = client.get(
-            "/api/v1/bots", params={"create_at_after": bot2.create_at.isoformat()}
+            "/api/v1/bots", params={"create_at_after": cutoff.isoformat()}
         )
 
-        # Assert
+        # Assert - only new bot should be included
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] >= 1
-        # bot2 should be included since filter is >=
-        assert any(item["rig_id"] == "rig-002" for item in data["items"])
+        assert data["total"] == 1
+        assert data["items"][0]["rig_id"] == "rig-new"
 
     def test_filter_create_at_before(
         self, client: TestClient, db_session: Session
     ) -> None:
-        """Filter by create_at_before returns bots at or before timestamp."""
-        # Arrange
-        bot1 = create_bot(db_session, rig_id="rig-001")
-        create_bot(db_session, rig_id="rig-002")
+        """Filter by create_at_before excludes bots created after cutoff."""
+        # Arrange - use explicit timestamps
+        old_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        new_time = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        cutoff = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        # Act - use bot1's create_at as the cutoff (should include bot1)
+        create_bot(db_session, rig_id="rig-old", create_at=old_time)
+        create_bot(db_session, rig_id="rig-new", create_at=new_time)
+
+        # Act
         response = client.get(
-            "/api/v1/bots", params={"create_at_before": bot1.create_at.isoformat()}
+            "/api/v1/bots", params={"create_at_before": cutoff.isoformat()}
         )
 
-        # Assert
+        # Assert - only old bot should be included
         assert response.status_code == 200
         data = response.json()
-        assert data["total"] >= 1
-        # bot1 should be included since filter is <=
-        assert any(item["rig_id"] == "rig-001" for item in data["items"])
+        assert data["total"] == 1
+        assert data["items"][0]["rig_id"] == "rig-old"
 
     def test_filter_create_at_range(
         self, client: TestClient, db_session: Session
     ) -> None:
-        """Filter by create_at range returns bots within range (inclusive)."""
-        # Arrange
-        create_bot(db_session, rig_id="rig-001")
-        bot2 = create_bot(db_session, rig_id="rig-002")
+        """Filter by create_at range includes only bots within range."""
+        # Arrange - three bots with distinct timestamps
+        early = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        middle = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        late = datetime(2024, 12, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        # Act - filter for exactly bot2's timestamp
+        create_bot(db_session, rig_id="rig-early", create_at=early)
+        create_bot(db_session, rig_id="rig-middle", create_at=middle)
+        create_bot(db_session, rig_id="rig-late", create_at=late)
+
+        # Act - filter for middle range
+        range_start = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
+        range_end = datetime(2024, 9, 1, 12, 0, 0, tzinfo=timezone.utc)
         response = client.get(
             "/api/v1/bots",
             params={
-                "create_at_after": bot2.create_at.isoformat(),
-                "create_at_before": bot2.create_at.isoformat(),
+                "create_at_after": range_start.isoformat(),
+                "create_at_before": range_end.isoformat(),
             },
         )
 
-        # Assert
+        # Assert - only middle bot should be included
         assert response.status_code == 200
         data = response.json()
-        # Should find bot2 at minimum (exact match on both bounds)
-        assert data["total"] >= 1
-        assert any(item["rig_id"] == "rig-002" for item in data["items"])
+        assert data["total"] == 1
+        assert data["items"][0]["rig_id"] == "rig-middle"
 
     def test_filter_last_run_at_after(
         self, client: TestClient, db_session: Session
     ) -> None:
-        """Filter by last_run_at_after returns bots that ran after timestamp."""
+        """Filter by last_run_at_after returns only bots that ran after cutoff."""
         # Arrange
-        past = datetime.now(timezone.utc) - timedelta(hours=2)
-        recent = datetime.now(timezone.utc) - timedelta(hours=1)
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=1, minutes=30)
+        past = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+        recent = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+        cutoff = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        create_bot(db_session, rig_id="rig-001", last_run_at=past)
-        create_bot(db_session, rig_id="rig-002", last_run_at=recent)
-        create_bot(db_session, rig_id="rig-003", last_run_at=None)
+        create_bot(db_session, rig_id="rig-old-run", last_run_at=past)
+        create_bot(db_session, rig_id="rig-new-run", last_run_at=recent)
+        create_bot(db_session, rig_id="rig-no-run", last_run_at=None)
 
         # Act
         response = client.get(
             "/api/v1/bots", params={"last_run_at_after": cutoff.isoformat()}
         )
 
-        # Assert
+        # Assert - only recent run bot should be included
         assert response.status_code == 200
         data = response.json()
         assert data["total"] == 1
-        assert data["items"][0]["rig_id"] == "rig-002"
+        assert data["items"][0]["rig_id"] == "rig-new-run"
 
 
 class TestListBotsCombinedFilters:
