@@ -3,8 +3,7 @@ from __future__ import annotations
 import math
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
@@ -42,7 +41,9 @@ def list_bots(
     if kill_switch is not None:
         query = query.where(Bot.kill_switch == kill_switch)
     if log_search is not None:
-        query = query.where(Bot.last_run_log.ilike(f"%{log_search}%"))
+        # Escape SQL wildcards to prevent injection
+        escaped = log_search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(Bot.last_run_log.ilike(f"%{escaped}%", escape="\\"))
     if create_at_after is not None:
         query = query.where(Bot.create_at >= create_at_after)
     if create_at_before is not None:
@@ -60,8 +61,8 @@ def list_bots(
     count_query = select(func.count()).select_from(query.subquery())
     total = db.execute(count_query).scalar() or 0
 
-    # Apply sorting and pagination
-    query = query.order_by(Bot.create_at.desc())
+    # Apply sorting and pagination (secondary sort by id for deterministic order)
+    query = query.order_by(Bot.create_at.desc(), Bot.id.desc())
     offset = (page - 1) * per_page
     query = query.offset(offset).limit(per_page)
 
@@ -85,12 +86,12 @@ def list_bots(
     response_model=BotResponse,
     responses={404: {"model": BotNotFoundError}},
 )
-def get_bot(bot_id: str, db: Session = Depends(get_db)) -> BotResponse | JSONResponse:
+def get_bot(bot_id: str, db: Session = Depends(get_db)) -> BotResponse:
     """Retrieve a single bot by ID."""
     bot = db.get(Bot, bot_id)
     if bot is None:
-        return JSONResponse(
+        raise HTTPException(
             status_code=404,
-            content={"detail": "Bot not found", "id": bot_id},
+            detail={"detail": "Bot not found", "id": bot_id},
         )
     return BotResponse.model_validate(bot)
