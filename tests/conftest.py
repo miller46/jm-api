@@ -1,6 +1,5 @@
 """Shared test fixtures."""
 
-import os
 from datetime import datetime
 
 import pytest
@@ -9,15 +8,29 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-# Set database_url for tests before any imports that might load settings
-os.environ["JM_API_DATABASE_URL"] = "sqlite:///:memory:"
-
-from jm_api.core.config import get_settings
 from jm_api.db.base import Base
 from jm_api.models.bot import Bot
 
-# Clear settings cache to pick up test environment
-get_settings.cache_clear()
+
+@pytest.fixture(scope="session", autouse=True)
+def set_test_env(monkeypatch_session):
+    """Set test environment variables before any tests run.
+
+    Uses session scope to set once for all tests, avoiding module-level side effects.
+    """
+    monkeypatch_session.setenv("JM_API_DATABASE_URL", "sqlite:///:memory:")
+    # Clear settings cache to pick up test environment
+    from jm_api.core.config import get_settings
+    get_settings.cache_clear()
+
+
+@pytest.fixture(scope="session")
+def monkeypatch_session():
+    """Session-scoped monkeypatch for environment setup."""
+    from _pytest.monkeypatch import MonkeyPatch
+    mp = MonkeyPatch()
+    yield mp
+    mp.undo()
 
 
 @pytest.fixture
