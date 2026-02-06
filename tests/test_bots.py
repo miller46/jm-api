@@ -71,22 +71,15 @@ class TestListBotsPagination:
         assert data["page"] == 2
         assert data["pages"] == 2
 
-    def test_list_bots_per_page_max_capped(
-        self, client: TestClient, db_session: Session
+    def test_list_bots_per_page_over_max_rejected(
+        self, client: TestClient
     ) -> None:
-        """per_page exceeding 100 is capped at 100."""
-        # Arrange
-        for i in range(150):
-            create_bot(db_session, rig_id=f"rig-{i:03d}")
-
+        """per_page exceeding 100 returns 422 validation error."""
         # Act
-        response = client.get("/api/v1/bots", params={"per_page": 200})
+        response = client.get("/api/v1/bots", params={"per_page": 101})
 
-        # Assert
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data["items"]) == 100
-        assert data["per_page"] == 100
+        # Assert - reject with 422, don't silently cap
+        assert response.status_code == 422
 
     def test_list_bots_per_page_zero_invalid(self, client: TestClient) -> None:
         """per_page=0 returns 422 validation error."""
@@ -150,6 +143,25 @@ class TestListBotsPagination:
         # Assert
         data = response.json()
         assert data["total"] == 10
+        assert data["pages"] == 1
+
+    def test_page_beyond_last_page_returns_empty(
+        self, client: TestClient, db_session: Session
+    ) -> None:
+        """Requesting page beyond total pages returns empty items with correct metadata."""
+        # Arrange
+        for i in range(3):
+            create_bot(db_session, rig_id=f"rig-{i:03d}")
+
+        # Act - request page 999 when there's only 1 page
+        response = client.get("/api/v1/bots", params={"page": 999, "per_page": 20})
+
+        # Assert - returns empty items but preserves total/pages info
+        assert response.status_code == 200
+        data = response.json()
+        assert data["items"] == []
+        assert data["total"] == 3
+        assert data["page"] == 999
         assert data["pages"] == 1
 
 
@@ -447,15 +459,15 @@ class TestGetBot:
         assert "last_update_at" in data
 
     def test_get_bot_not_found(self, client: TestClient) -> None:
-        """Get nonexistent bot returns 404 with detail."""
+        """Get nonexistent bot returns 404 with flat detail structure."""
         # Act
         response = client.get("/api/v1/bots/nonexistent123")
 
         # Assert
         assert response.status_code == 404
         data = response.json()
-        # HTTPException wraps detail in "detail" key
-        assert data["detail"]["detail"] == "Bot not found"
+        # Flat structure under "detail" key (not double-nested)
+        assert data["detail"]["message"] == "Bot not found"
         assert data["detail"]["id"] == "nonexistent123"
 
     def test_get_bot_response_has_all_fields(

@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     environment: str = Field(default="development")
     debug: bool = Field(default=False)
 
-    database_url: str = Field(default="sqlite:///./app.db")
+    database_url: str = Field(default="sqlite:///./dev.db")
 
     @model_validator(mode="after")
     def validate_database_url_for_environment(self) -> "Settings":

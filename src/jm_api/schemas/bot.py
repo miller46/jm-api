@@ -45,5 +45,5 @@ class BotListResponse(BaseModel):
 class BotNotFoundError(BaseModel):
     """Error response when bot is not found."""
 
-    detail: str = "Bot not found"
+    message: str = "Bot not found"
     id: str

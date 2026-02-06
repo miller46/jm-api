@@ -61,6 +61,7 @@ def create_bot(
     last_run_log: str | None = None,
     last_run_at: datetime | None = None,
     create_at: datetime | None = None,
+    last_update_at: datetime | None = None,
 ) -> Bot:
     """Helper to create and persist a bot.
 
@@ -71,6 +72,7 @@ def create_bot(
         last_run_log: Log from last run
         last_run_at: Timestamp of last run
         create_at: Override creation timestamp (for testing date filters)
+        last_update_at: Override last update timestamp (for testing date filters)
     """
     bot = Bot(
         rig_id=rig_id,
@@ -81,17 +83,20 @@ def create_bot(
     session.add(bot)
     session.flush()  # Get the ID assigned
 
-    # Override create_at if specified (for deterministic date filter tests)
+    # Override timestamps if specified (for deterministic date filter tests)
+    updates = {}
     if create_at is not None:
+        updates["create_at"] = create_at
+    if last_update_at is not None:
+        updates["last_update_at"] = last_update_at
+
+    if updates:
         session.execute(
             sa.update(Bot)
             .where(Bot.id == bot.id)
-            .values(create_at=create_at)
+            .values(**updates)
         )
-        session.commit()
-        session.refresh(bot)
-    else:
-        session.commit()
-        session.refresh(bot)
 
+    session.commit()
+    session.refresh(bot)
     return bot

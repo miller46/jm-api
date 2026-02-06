@@ -17,7 +17,7 @@ router = APIRouter(prefix="/bots", tags=["bots"])
 @router.get("", response_model=BotListResponse)
 def list_bots(
     page: int = Query(default=1, ge=1),
-    per_page: int = Query(default=20, ge=1),
+    per_page: int = Query(default=20, ge=1, le=100),
     rig_id: str | None = Query(default=None),
     kill_switch: bool | None = Query(default=None),
     log_search: str | None = Query(default=None),
@@ -30,8 +30,6 @@ def list_bots(
     db: Session = Depends(get_db),
 ) -> BotListResponse:
     """List all bots with filtering, pagination, and sorting."""
-    # Cap per_page at 100
-    per_page = min(per_page, 100)
 
     query = select(Bot)
 
@@ -92,6 +90,6 @@ def get_bot(bot_id: str, db: Session = Depends(get_db)) -> BotResponse:
     if bot is None:
         raise HTTPException(
             status_code=404,
-            detail={"detail": "Bot not found", "id": bot_id},
+            detail={"message": "Bot not found", "id": bot_id},
         )
     return BotResponse.model_validate(bot)

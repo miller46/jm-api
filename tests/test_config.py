@@ -11,7 +11,7 @@ class TestDatabaseUrlConfig:
     def test_database_url_default_in_development(self) -> None:
         """SQLite default is allowed in development environment."""
         settings = Settings(environment="development")
-        assert settings.database_url == "sqlite:///./app.db"
+        assert settings.database_url == "sqlite:///./dev.db"
 
     def test_database_url_custom_value_in_development(self) -> None:
         """Custom database_url works in development."""
