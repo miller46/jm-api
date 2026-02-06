@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     environment: str = Field(default="development")
     debug: bool = Field(default=False)
 
-    database_url: str = Field(default="sqlite:///./dev.db")
+    # No default - must be explicitly configured via JM_API_DATABASE_URL env var
+    database_url: str = Field()
 
     @model_validator(mode="after")
     def validate_database_url_for_environment(self) -> "Settings":

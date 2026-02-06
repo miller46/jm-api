@@ -1,5 +1,6 @@
 """Shared test fixtures."""
 
+import os
 from datetime import datetime
 
 import pytest
@@ -8,8 +9,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+# Set database_url for tests before any imports that might load settings
+os.environ["JM_API_DATABASE_URL"] = "sqlite:///:memory:"
+
+from jm_api.core.config import get_settings
 from jm_api.db.base import Base
 from jm_api.models.bot import Bot
+
+# Clear settings cache to pick up test environment
+get_settings.cache_clear()
 
 
 @pytest.fixture
@@ -34,12 +42,18 @@ def db_session(db_engine) -> Session:
 
 
 @pytest.fixture
-def app(db_session: Session) -> FastAPI:
+def app(db_engine, db_session: Session) -> FastAPI:
     """Create test app with overridden database dependency."""
+    from sqlalchemy.orm import sessionmaker
+
     from jm_api.app import create_app
     from jm_api.db.session import get_db
 
     app = create_app()
+
+    # Set up app.state with test engine and session factory
+    app.state.db_engine = db_engine
+    app.state.db_session_factory = sessionmaker(bind=db_engine)
 
     def override_get_db():
         yield db_session

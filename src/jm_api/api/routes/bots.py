@@ -1,17 +1,62 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 from jm_api.db.session import get_db
 from jm_api.models.bot import Bot
 from jm_api.schemas.bot import BotListResponse, BotNotFoundError, BotResponse
 
 router = APIRouter(prefix="/bots", tags=["bots"])
+
+
+@dataclass
+class BotFilters:
+    """Filter parameters for bot queries."""
+
+    rig_id: str | None = None
+    kill_switch: bool | None = None
+    log_search: str | None = None
+    create_at_after: datetime | None = None
+    create_at_before: datetime | None = None
+    last_update_at_after: datetime | None = None
+    last_update_at_before: datetime | None = None
+    last_run_at_after: datetime | None = None
+    last_run_at_before: datetime | None = None
+
+
+def _apply_bot_filters(query: Select, filters: BotFilters) -> Select:
+    """Apply filters to a bot query.
+
+    Used by both data and count queries to ensure consistent filtering.
+    """
+    if filters.rig_id is not None:
+        query = query.where(Bot.rig_id == filters.rig_id)
+    if filters.kill_switch is not None:
+        query = query.where(Bot.kill_switch == filters.kill_switch)
+    if filters.log_search is not None:
+        # Escape SQL wildcards to prevent injection
+        escaped = filters.log_search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(Bot.last_run_log.ilike(f"%{escaped}%", escape="\\"))
+    if filters.create_at_after is not None:
+        query = query.where(Bot.create_at >= filters.create_at_after)
+    if filters.create_at_before is not None:
+        query = query.where(Bot.create_at <= filters.create_at_before)
+    if filters.last_update_at_after is not None:
+        query = query.where(Bot.last_update_at >= filters.last_update_at_after)
+    if filters.last_update_at_before is not None:
+        query = query.where(Bot.last_update_at <= filters.last_update_at_before)
+    if filters.last_run_at_after is not None:
+        query = query.where(Bot.last_run_at >= filters.last_run_at_after)
+    if filters.last_run_at_before is not None:
+        query = query.where(Bot.last_run_at <= filters.last_run_at_before)
+    return query
 
 
 @router.get("", response_model=BotListResponse)
@@ -30,42 +75,34 @@ def list_bots(
     db: Session = Depends(get_db),
 ) -> BotListResponse:
     """List all bots with filtering, pagination, and sorting."""
+    filters = BotFilters(
+        rig_id=rig_id,
+        kill_switch=kill_switch,
+        log_search=log_search,
+        create_at_after=create_at_after,
+        create_at_before=create_at_before,
+        last_update_at_after=last_update_at_after,
+        last_update_at_before=last_update_at_before,
+        last_run_at_after=last_run_at_after,
+        last_run_at_before=last_run_at_before,
+    )
 
-    query = select(Bot)
-
-    # Apply filters (AND logic)
-    if rig_id is not None:
-        query = query.where(Bot.rig_id == rig_id)
-    if kill_switch is not None:
-        query = query.where(Bot.kill_switch == kill_switch)
-    if log_search is not None:
-        # Escape SQL wildcards to prevent injection
-        escaped = log_search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        query = query.where(Bot.last_run_log.ilike(f"%{escaped}%", escape="\\"))
-    if create_at_after is not None:
-        query = query.where(Bot.create_at >= create_at_after)
-    if create_at_before is not None:
-        query = query.where(Bot.create_at <= create_at_before)
-    if last_update_at_after is not None:
-        query = query.where(Bot.last_update_at >= last_update_at_after)
-    if last_update_at_before is not None:
-        query = query.where(Bot.last_update_at <= last_update_at_before)
-    if last_run_at_after is not None:
-        query = query.where(Bot.last_run_at >= last_run_at_after)
-    if last_run_at_before is not None:
-        query = query.where(Bot.last_run_at <= last_run_at_before)
-
-    # Get total count
-    count_query = select(func.count()).select_from(query.subquery())
+    # Get total count using direct WHERE clauses (more efficient than subquery)
+    count_query = _apply_bot_filters(
+        select(func.count()).select_from(Bot), filters
+    )
     total = db.execute(count_query).scalar() or 0
 
+    # Build data query with same filters
+    data_query = _apply_bot_filters(select(Bot), filters)
+
     # Apply sorting and pagination (secondary sort by id for deterministic order)
-    query = query.order_by(Bot.create_at.desc(), Bot.id.desc())
+    data_query = data_query.order_by(Bot.create_at.desc(), Bot.id.desc())
     offset = (page - 1) * per_page
-    query = query.offset(offset).limit(per_page)
+    data_query = data_query.offset(offset).limit(per_page)
 
     # Execute query
-    bots = db.execute(query).scalars().all()
+    bots = db.execute(data_query).scalars().all()
 
     # Calculate pages
     pages = math.ceil(total / per_page) if total > 0 else 0
