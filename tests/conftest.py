@@ -54,49 +54,58 @@ def client(app: FastAPI) -> TestClient:
     return TestClient(app)
 
 
-def create_bot(
-    session: Session,
-    rig_id: str = "rig-001",
-    kill_switch: bool = False,
-    last_run_log: str | None = None,
-    last_run_at: datetime | None = None,
-    create_at: datetime | None = None,
-    last_update_at: datetime | None = None,
-) -> Bot:
-    """Helper to create and persist a bot.
+@pytest.fixture
+def bot_factory(db_session: Session):
+    """Factory fixture for creating bots in tests.
 
-    Args:
-        session: Database session
-        rig_id: Bot rig identifier
-        kill_switch: Whether bot is killed
-        last_run_log: Log from last run
-        last_run_at: Timestamp of last run
-        create_at: Override creation timestamp (for testing date filters)
-        last_update_at: Override last update timestamp (for testing date filters)
+    Usage:
+        def test_something(bot_factory):
+            bot = bot_factory(rig_id="my-rig")
     """
-    bot = Bot(
-        rig_id=rig_id,
-        kill_switch=kill_switch,
-        last_run_log=last_run_log,
-        last_run_at=last_run_at,
-    )
-    session.add(bot)
-    session.flush()  # Get the ID assigned
 
-    # Override timestamps if specified (for deterministic date filter tests)
-    updates = {}
-    if create_at is not None:
-        updates["create_at"] = create_at
-    if last_update_at is not None:
-        updates["last_update_at"] = last_update_at
+    def _create_bot(
+        rig_id: str = "rig-001",
+        kill_switch: bool = False,
+        last_run_log: str | None = None,
+        last_run_at: datetime | None = None,
+        create_at: datetime | None = None,
+        last_update_at: datetime | None = None,
+    ) -> Bot:
+        """Create and persist a bot.
 
-    if updates:
-        session.execute(
-            sa.update(Bot)
-            .where(Bot.id == bot.id)
-            .values(**updates)
+        Args:
+            rig_id: Bot rig identifier
+            kill_switch: Whether bot is killed
+            last_run_log: Log from last run
+            last_run_at: Timestamp of last run
+            create_at: Override creation timestamp (for testing date filters)
+            last_update_at: Override last update timestamp (for testing date filters)
+        """
+        bot = Bot(
+            rig_id=rig_id,
+            kill_switch=kill_switch,
+            last_run_log=last_run_log,
+            last_run_at=last_run_at,
         )
+        db_session.add(bot)
+        db_session.flush()  # Get the ID assigned
 
-    session.commit()
-    session.refresh(bot)
-    return bot
+        # Override timestamps if specified (for deterministic date filter tests)
+        updates = {}
+        if create_at is not None:
+            updates["create_at"] = create_at
+        if last_update_at is not None:
+            updates["last_update_at"] = last_update_at
+
+        if updates:
+            db_session.execute(
+                sa.update(Bot)
+                .where(Bot.id == bot.id)
+                .values(**updates)
+            )
+
+        db_session.commit()
+        db_session.refresh(bot)
+        return bot
+
+    return _create_bot

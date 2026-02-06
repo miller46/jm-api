@@ -3,9 +3,6 @@
 from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
-
-from conftest import create_bot
 
 
 # --- List Endpoint Tests ---
@@ -33,12 +30,12 @@ class TestListBotsPagination:
     """Test pagination behavior."""
 
     def test_list_bots_paginated_page_1(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Page 1 of 25 bots returns 20 items with correct metadata."""
         # Arrange
         for i in range(25):
-            create_bot(db_session, rig_id=f"rig-{i:03d}")
+            bot_factory(rig_id=f"rig-{i:03d}")
 
         # Act
         response = client.get("/api/v1/bots")
@@ -53,12 +50,12 @@ class TestListBotsPagination:
         assert data["pages"] == 2
 
     def test_list_bots_paginated_page_2(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Page 2 of 25 bots returns remaining 5 items."""
         # Arrange
         for i in range(25):
-            create_bot(db_session, rig_id=f"rig-{i:03d}")
+            bot_factory(rig_id=f"rig-{i:03d}")
 
         # Act
         response = client.get("/api/v1/bots", params={"page": 2})
@@ -98,12 +95,12 @@ class TestListBotsPagination:
         assert response.status_code == 422
 
     def test_pagination_pages_exact_division(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """40 bots with per_page=20 gives pages=2."""
         # Arrange
         for i in range(40):
-            create_bot(db_session, rig_id=f"rig-{i:03d}")
+            bot_factory(rig_id=f"rig-{i:03d}")
 
         # Act
         response = client.get("/api/v1/bots", params={"per_page": 20})
@@ -114,12 +111,12 @@ class TestListBotsPagination:
         assert data["pages"] == 2
 
     def test_pagination_pages_with_remainder(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """41 bots with per_page=20 gives pages=3."""
         # Arrange
         for i in range(41):
-            create_bot(db_session, rig_id=f"rig-{i:03d}")
+            bot_factory(rig_id=f"rig-{i:03d}")
 
         # Act
         response = client.get("/api/v1/bots", params={"per_page": 20})
@@ -130,12 +127,12 @@ class TestListBotsPagination:
         assert data["pages"] == 3
 
     def test_pagination_single_page(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """10 bots with per_page=20 gives pages=1."""
         # Arrange
         for i in range(10):
-            create_bot(db_session, rig_id=f"rig-{i:03d}")
+            bot_factory(rig_id=f"rig-{i:03d}")
 
         # Act
         response = client.get("/api/v1/bots", params={"per_page": 20})
@@ -146,12 +143,12 @@ class TestListBotsPagination:
         assert data["pages"] == 1
 
     def test_page_beyond_last_page_returns_empty(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Requesting page beyond total pages returns empty items with correct metadata."""
         # Arrange
         for i in range(3):
-            create_bot(db_session, rig_id=f"rig-{i:03d}")
+            bot_factory(rig_id=f"rig-{i:03d}")
 
         # Act - request page 999 when there's only 1 page
         response = client.get("/api/v1/bots", params={"page": 999, "per_page": 20})
@@ -168,12 +165,12 @@ class TestListBotsPagination:
 class TestListBotsFilters:
     """Test filtering functionality."""
 
-    def test_filter_by_rig_id(self, client: TestClient, db_session: Session) -> None:
+    def test_filter_by_rig_id(self, client: TestClient, bot_factory) -> None:
         """Filter by rig_id returns only matching bots."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001")
-        create_bot(db_session, rig_id="rig-002")
-        create_bot(db_session, rig_id="rig-001")
+        bot_factory(rig_id="rig-001")
+        bot_factory(rig_id="rig-002")
+        bot_factory(rig_id="rig-001")
 
         # Act
         response = client.get("/api/v1/bots", params={"rig_id": "rig-001"})
@@ -185,13 +182,13 @@ class TestListBotsFilters:
         assert all(item["rig_id"] == "rig-001" for item in data["items"])
 
     def test_filter_by_kill_switch_true(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Filter by kill_switch=true returns only killed bots."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001", kill_switch=True)
-        create_bot(db_session, rig_id="rig-002", kill_switch=False)
-        create_bot(db_session, rig_id="rig-003", kill_switch=True)
+        bot_factory(rig_id="rig-001", kill_switch=True)
+        bot_factory(rig_id="rig-002", kill_switch=False)
+        bot_factory(rig_id="rig-003", kill_switch=True)
 
         # Act
         response = client.get("/api/v1/bots", params={"kill_switch": True})
@@ -203,13 +200,13 @@ class TestListBotsFilters:
         assert all(item["kill_switch"] is True for item in data["items"])
 
     def test_filter_by_kill_switch_false(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Filter by kill_switch=false returns only active bots."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001", kill_switch=True)
-        create_bot(db_session, rig_id="rig-002", kill_switch=False)
-        create_bot(db_session, rig_id="rig-003", kill_switch=False)
+        bot_factory(rig_id="rig-001", kill_switch=True)
+        bot_factory(rig_id="rig-002", kill_switch=False)
+        bot_factory(rig_id="rig-003", kill_switch=False)
 
         # Act
         response = client.get("/api/v1/bots", params={"kill_switch": False})
@@ -221,13 +218,13 @@ class TestListBotsFilters:
         assert all(item["kill_switch"] is False for item in data["items"])
 
     def test_filter_by_log_search_case_insensitive(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """log_search matches case-insensitively."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001", last_run_log="ERROR occurred")
-        create_bot(db_session, rig_id="rig-002", last_run_log="error found")
-        create_bot(db_session, rig_id="rig-003", last_run_log="Success")
+        bot_factory(rig_id="rig-001", last_run_log="ERROR occurred")
+        bot_factory(rig_id="rig-002", last_run_log="error found")
+        bot_factory(rig_id="rig-003", last_run_log="Success")
 
         # Act
         response = client.get("/api/v1/bots", params={"log_search": "ERROR"})
@@ -238,13 +235,13 @@ class TestListBotsFilters:
         assert data["total"] == 2
 
     def test_filter_by_log_search_substring(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """log_search matches substrings."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001", last_run_log="Task failed")
-        create_bot(db_session, rig_id="rig-002", last_run_log="failure detected")
-        create_bot(db_session, rig_id="rig-003", last_run_log="Success")
+        bot_factory(rig_id="rig-001", last_run_log="Task failed")
+        bot_factory(rig_id="rig-002", last_run_log="failure detected")
+        bot_factory(rig_id="rig-003", last_run_log="Success")
 
         # Act
         response = client.get("/api/v1/bots", params={"log_search": "fail"})
@@ -255,11 +252,11 @@ class TestListBotsFilters:
         assert data["total"] == 2
 
     def test_filter_no_results_returns_empty(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Filter with no matches returns 200 with empty items."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001")
+        bot_factory(rig_id="rig-001")
 
         # Act
         response = client.get("/api/v1/bots", params={"rig_id": "nonexistent"})
@@ -275,7 +272,7 @@ class TestListBotsDateFilters:
     """Test date range filtering with explicit timestamps."""
 
     def test_filter_create_at_after(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Filter by create_at_after excludes bots created before cutoff."""
         # Arrange - use explicit timestamps for deterministic testing
@@ -283,8 +280,8 @@ class TestListBotsDateFilters:
         new_time = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         cutoff = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        create_bot(db_session, rig_id="rig-old", create_at=old_time)
-        create_bot(db_session, rig_id="rig-new", create_at=new_time)
+        bot_factory(rig_id="rig-old", create_at=old_time)
+        bot_factory(rig_id="rig-new", create_at=new_time)
 
         # Act
         response = client.get(
@@ -298,7 +295,7 @@ class TestListBotsDateFilters:
         assert data["items"][0]["rig_id"] == "rig-new"
 
     def test_filter_create_at_before(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Filter by create_at_before excludes bots created after cutoff."""
         # Arrange - use explicit timestamps
@@ -306,8 +303,8 @@ class TestListBotsDateFilters:
         new_time = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         cutoff = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        create_bot(db_session, rig_id="rig-old", create_at=old_time)
-        create_bot(db_session, rig_id="rig-new", create_at=new_time)
+        bot_factory(rig_id="rig-old", create_at=old_time)
+        bot_factory(rig_id="rig-new", create_at=new_time)
 
         # Act
         response = client.get(
@@ -321,7 +318,7 @@ class TestListBotsDateFilters:
         assert data["items"][0]["rig_id"] == "rig-old"
 
     def test_filter_create_at_range(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Filter by create_at range includes only bots within range."""
         # Arrange - three bots with distinct timestamps
@@ -329,9 +326,9 @@ class TestListBotsDateFilters:
         middle = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         late = datetime(2024, 12, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        create_bot(db_session, rig_id="rig-early", create_at=early)
-        create_bot(db_session, rig_id="rig-middle", create_at=middle)
-        create_bot(db_session, rig_id="rig-late", create_at=late)
+        bot_factory(rig_id="rig-early", create_at=early)
+        bot_factory(rig_id="rig-middle", create_at=middle)
+        bot_factory(rig_id="rig-late", create_at=late)
 
         # Act - filter for middle range
         range_start = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -351,7 +348,7 @@ class TestListBotsDateFilters:
         assert data["items"][0]["rig_id"] == "rig-middle"
 
     def test_filter_last_run_at_after(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Filter by last_run_at_after returns only bots that ran after cutoff."""
         # Arrange
@@ -359,9 +356,9 @@ class TestListBotsDateFilters:
         recent = datetime(2024, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
         cutoff = datetime(2024, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
-        create_bot(db_session, rig_id="rig-old-run", last_run_at=past)
-        create_bot(db_session, rig_id="rig-new-run", last_run_at=recent)
-        create_bot(db_session, rig_id="rig-no-run", last_run_at=None)
+        bot_factory(rig_id="rig-old-run", last_run_at=past)
+        bot_factory(rig_id="rig-new-run", last_run_at=recent)
+        bot_factory(rig_id="rig-no-run", last_run_at=None)
 
         # Act
         response = client.get(
@@ -379,14 +376,14 @@ class TestListBotsCombinedFilters:
     """Test combining multiple filters."""
 
     def test_multiple_filters_and_logic(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Multiple filters combine with AND logic."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001", kill_switch=False)
-        create_bot(db_session, rig_id="rig-001", kill_switch=True)
-        create_bot(db_session, rig_id="rig-002", kill_switch=False)
-        create_bot(db_session, rig_id="rig-002", kill_switch=True)
+        bot_factory(rig_id="rig-001", kill_switch=False)
+        bot_factory(rig_id="rig-001", kill_switch=True)
+        bot_factory(rig_id="rig-002", kill_switch=False)
+        bot_factory(rig_id="rig-002", kill_switch=True)
 
         # Act
         response = client.get(
@@ -405,13 +402,13 @@ class TestListBotsSorting:
     """Test sorting behavior."""
 
     def test_sorted_newest_first_by_default(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Bots are sorted by create_at DESC by default."""
         # Arrange
-        bot1 = create_bot(db_session, rig_id="rig-001")
-        bot2 = create_bot(db_session, rig_id="rig-002")
-        bot3 = create_bot(db_session, rig_id="rig-003")
+        bot1 = bot_factory(rig_id="rig-001")
+        bot2 = bot_factory(rig_id="rig-002")
+        bot3 = bot_factory(rig_id="rig-003")
 
         # Act
         response = client.get("/api/v1/bots")
@@ -432,12 +429,11 @@ class TestListBotsSorting:
 class TestGetBot:
     """Test GET /api/v1/bots/{id}."""
 
-    def test_get_bot_found(self, client: TestClient, db_session: Session) -> None:
+    def test_get_bot_found(self, client: TestClient, bot_factory) -> None:
         """Get existing bot returns all fields."""
         # Arrange
         run_time = datetime.now(timezone.utc)
-        bot = create_bot(
-            db_session,
+        bot = bot_factory(
             rig_id="rig-001",
             kill_switch=True,
             last_run_log="Test log",
@@ -460,22 +456,23 @@ class TestGetBot:
 
     def test_get_bot_not_found(self, client: TestClient) -> None:
         """Get nonexistent bot returns 404 with flat detail structure."""
-        # Act
-        response = client.get("/api/v1/bots/nonexistent123")
+        # Act - use valid 32-char alphanumeric ID format
+        nonexistent_id = "aaaabbbbccccddddeeeeffffgggghhhh"
+        response = client.get(f"/api/v1/bots/{nonexistent_id}")
 
         # Assert
         assert response.status_code == 404
         data = response.json()
         # Flat structure under "detail" key (not double-nested)
         assert data["detail"]["message"] == "Bot not found"
-        assert data["detail"]["id"] == "nonexistent123"
+        assert data["detail"]["id"] == nonexistent_id
 
     def test_get_bot_response_has_all_fields(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Bot response includes all expected fields."""
         # Arrange
-        bot = create_bot(db_session, rig_id="rig-001")
+        bot = bot_factory(rig_id="rig-001")
 
         # Act
         response = client.get(f"/api/v1/bots/{bot.id}")
@@ -502,13 +499,13 @@ class TestLogSearchSqlInjectionPrevention:
     """Test that log_search wildcards are escaped properly."""
 
     def test_log_search_percent_wildcard_escaped(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Percent sign in log_search is treated literally, not as wildcard."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001", last_run_log="100% complete")
-        create_bot(db_session, rig_id="rig-002", last_run_log="complete")
-        create_bot(db_session, rig_id="rig-003", last_run_log="50% done")
+        bot_factory(rig_id="rig-001", last_run_log="100% complete")
+        bot_factory(rig_id="rig-002", last_run_log="complete")
+        bot_factory(rig_id="rig-003", last_run_log="50% done")
 
         # Act - search for literal "%"
         response = client.get("/api/v1/bots", params={"log_search": "%"})
@@ -521,13 +518,13 @@ class TestLogSearchSqlInjectionPrevention:
         assert rig_ids == {"rig-001", "rig-003"}
 
     def test_log_search_underscore_wildcard_escaped(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Underscore in log_search is treated literally, not as single-char wildcard."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001", last_run_log="test_case passed")
-        create_bot(db_session, rig_id="rig-002", last_run_log="testAcase passed")
-        create_bot(db_session, rig_id="rig-003", last_run_log="test case passed")
+        bot_factory(rig_id="rig-001", last_run_log="test_case passed")
+        bot_factory(rig_id="rig-002", last_run_log="testAcase passed")
+        bot_factory(rig_id="rig-003", last_run_log="test case passed")
 
         # Act - search for literal "_"
         response = client.get("/api/v1/bots", params={"log_search": "test_case"})
@@ -542,12 +539,12 @@ class TestLogSearchSqlInjectionPrevention:
 class TestPaginationEdgeCases:
     """Test pagination edge cases from PR review."""
 
-    def test_per_page_one(self, client: TestClient, db_session: Session) -> None:
+    def test_per_page_one(self, client: TestClient, bot_factory) -> None:
         """per_page=1 returns single item per page."""
         # Arrange
-        create_bot(db_session, rig_id="rig-001")
-        create_bot(db_session, rig_id="rig-002")
-        create_bot(db_session, rig_id="rig-003")
+        bot_factory(rig_id="rig-001")
+        bot_factory(rig_id="rig-002")
+        bot_factory(rig_id="rig-003")
 
         # Act
         response = client.get("/api/v1/bots", params={"per_page": 1})
@@ -565,13 +562,13 @@ class TestDeterministicOrdering:
     """Test that ordering is deterministic with secondary sort key."""
 
     def test_bots_with_same_create_at_have_deterministic_order(
-        self, client: TestClient, db_session: Session
+        self, client: TestClient, bot_factory
     ) -> None:
         """Bots created at same time are ordered deterministically by id."""
         # Arrange - create bots that may have identical create_at timestamps
         bots = []
         for i in range(5):
-            bot = create_bot(db_session, rig_id=f"rig-{i:03d}")
+            bot = bot_factory(rig_id=f"rig-{i:03d}")
             bots.append(bot)
 
         # Act - fetch twice
@@ -584,3 +581,40 @@ class TestDeterministicOrdering:
         ids1 = [item["id"] for item in response1.json()["items"]]
         ids2 = [item["id"] for item in response2.json()["items"]]
         assert ids1 == ids2
+
+
+class TestBotIdValidation:
+    """Test bot_id path parameter validation."""
+
+    def test_get_bot_invalid_id_too_short(self, client: TestClient) -> None:
+        """bot_id shorter than 32 characters returns 422."""
+        # Act
+        response = client.get("/api/v1/bots/abc123")
+
+        # Assert
+        assert response.status_code == 422
+
+    def test_get_bot_invalid_id_too_long(self, client: TestClient) -> None:
+        """bot_id longer than 32 characters returns 422."""
+        # Act - 33 character ID
+        long_id = "a" * 33
+        response = client.get(f"/api/v1/bots/{long_id}")
+
+        # Assert
+        assert response.status_code == 422
+
+    def test_get_bot_invalid_id_non_alphanumeric(self, client: TestClient) -> None:
+        """bot_id with non-alphanumeric characters returns 422."""
+        # Act - ID with special characters
+        response = client.get("/api/v1/bots/abc-123-def-456-ghi-789-jkl-012")
+
+        # Assert
+        assert response.status_code == 422
+
+    def test_get_bot_valid_id_format_not_found(self, client: TestClient) -> None:
+        """Valid 32-char alphanumeric bot_id that doesn't exist returns 404."""
+        # Act - valid format but bot doesn't exist
+        response = client.get("/api/v1/bots/a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6")
+
+        # Assert - should be 404 not found, not 422 validation error
+        assert response.status_code == 404

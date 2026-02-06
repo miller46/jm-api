@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
@@ -84,7 +84,10 @@ def list_bots(
     response_model=BotResponse,
     responses={404: {"model": BotNotFoundError}},
 )
-def get_bot(bot_id: str, db: Session = Depends(get_db)) -> BotResponse:
+def get_bot(
+    bot_id: str = Path(pattern=r"^[a-zA-Z0-9]{32}$"),
+    db: Session = Depends(get_db),
+) -> BotResponse:
     """Retrieve a single bot by ID."""
     bot = db.get(Bot, bot_id)
     if bot is None:
