@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import ConfigDict, BaseModel
+
+from jm_api.schemas.generic import ListResponse
 
 
 class BotResponse(BaseModel):
@@ -32,18 +34,7 @@ class BotResponse(BaseModel):
     )
 
 
-class BotListResponse(BaseModel):
+class BotListResponse(ListResponse[BotResponse]):
     """Paginated list of bots response schema."""
 
-    items: list[BotResponse]
-    total: int
-    page: int
-    per_page: int
-    pages: int
-
-
-class BotNotFoundError(BaseModel):
-    """Error response when bot is not found."""
-
-    message: str = "Bot not found"
-    id: str
+    pass
