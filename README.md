@@ -86,3 +86,4 @@ Comma-separated values are supported for list settings like `ALLOW_ORIGINS` and
 | `ALLOWED_HOSTS`       | *(empty)*        | Comma-separated trusted hosts             |
 
 See `.env.example` for defaults and guidance.
+
