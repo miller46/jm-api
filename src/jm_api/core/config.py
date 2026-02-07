@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Environments that require explicit database configuration
+_PRODUCTION_ENVIRONMENTS = {"production", "staging"}
 
 
 class Settings(BaseSettings):
@@ -11,6 +14,21 @@ class Settings(BaseSettings):
     app_version: str = Field(default="0.1.0")
     environment: str = Field(default="development")
     debug: bool = Field(default=False)
+
+    # No default - must be explicitly configured via JM_API_DATABASE_URL env var
+    database_url: str = Field()
+
+    @model_validator(mode="after")
+    def validate_database_url_for_environment(self) -> "Settings":
+        """Validate database_url is appropriate for the environment."""
+        if self.environment in _PRODUCTION_ENVIRONMENTS:
+            # Check if using any SQLite database (not suitable for production)
+            if self.database_url.startswith("sqlite"):
+                raise ValueError(
+                    "SQLite is not recommended for production. "
+                    "Use PostgreSQL or another production database."
+                )
+        return self
 
     api_v1_prefix: str = Field(default="/api/v1")
 
