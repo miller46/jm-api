@@ -84,13 +84,17 @@ def apply_filters(
     return query
 
 
-def make_filter_dependency(filter_config: list[FilterField]) -> type:
+def make_filter_dependency(
+    filter_config: list[FilterField],
+    resource_name: str = "",
+) -> type:
     """Create a dataclass suitable for FastAPI Depends() from filter config.
 
     FastAPI introspects the class fields as Query parameters.
 
     Args:
         filter_config: List of FilterField declarations.
+        resource_name: Resource name for unique class naming in OpenAPI schema.
 
     Returns:
         A dataclass type with Optional fields for each filter parameter.
@@ -123,4 +127,5 @@ def make_filter_dependency(filter_config: list[FilterField]) -> type:
                 )
             )
 
-    return dataclasses.make_dataclass("FilterParams", fields)
+    class_name = f"{resource_name}FilterParams" if resource_name else "FilterParams"
+    return dataclasses.make_dataclass(class_name, fields)

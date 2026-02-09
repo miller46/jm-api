@@ -372,3 +372,124 @@ class TestListResponseSchema:
         )
         assert len(resp.items) == 1
         assert resp.items[0].name == "w"
+
+
+# --- PR Review Fix Tests ---
+
+
+class TestCustomSortColumns:
+    """Test that sort_columns parameter allows overriding default sort order."""
+
+    def test_custom_sort_by_name_asc(
+        self, widget_engine, widget_session: Session
+    ) -> None:
+        """Custom sort_columns overrides default create_at DESC ordering."""
+        app = FastAPI()
+        app.state.db_engine = widget_engine
+        app.state.db_session_factory = sessionmaker(bind=widget_engine)
+
+        def override_get_db():
+            yield widget_session
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        router = create_read_router(
+            prefix="/widgets",
+            tags=["widgets"],
+            model=Widget,
+            response_schema=WidgetResponse,
+            filter_config=WIDGET_FILTERS,
+            resource_name="Widget",
+            sort_columns=[("name", "asc")],
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        # Create widgets with names in non-alphabetical order
+        w_c = Widget(name="charlie", active=True)
+        w_a = Widget(name="alpha", active=True)
+        w_b = Widget(name="bravo", active=True)
+        widget_session.add_all([w_c, w_a, w_b])
+        widget_session.commit()
+
+        response = client.get("/widgets")
+        assert response.status_code == 200
+        data = response.json()
+        names = [item["name"] for item in data["items"]]
+        assert names == ["alpha", "bravo", "charlie"]
+
+    def test_default_sort_is_create_at_desc_id_desc(
+        self, widget_client: TestClient, widget_factory
+    ) -> None:
+        """Default sort (no sort_columns) remains create_at DESC, id DESC."""
+        w1 = widget_factory(name="first")
+        widget_factory(name="second")
+        w3 = widget_factory(name="third")
+
+        response = widget_client.get("/widgets")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["items"][0]["id"] == w3.id
+        assert data["items"][2]["id"] == w1.id
+
+
+class TestListEndpointResponseModel:
+    """Test that list endpoint declares response_model for OpenAPI docs."""
+
+    def test_list_endpoint_has_response_model_in_openapi(
+        self, widget_app: FastAPI
+    ) -> None:
+        """List endpoint's OpenAPI schema includes response body schema."""
+        client = TestClient(widget_app)
+        response = client.get("/openapi.json")
+        assert response.status_code == 200
+        schema = response.json()
+
+        # The list endpoint should have a documented 200 response with content schema
+        list_path = schema["paths"]["/widgets"]["get"]
+        resp_200 = list_path["responses"]["200"]
+        assert "content" in resp_200
+        # The schema should reference a model with "items", "total", etc.
+        resp_schema = resp_200["content"]["application/json"]["schema"]
+        # It should have properties or $ref — either way, not be empty/missing
+        assert "$ref" in resp_schema or "properties" in resp_schema
+
+
+class TestUniqueRouteNames:
+    """Test that routers produce resource-specific function names."""
+
+    def test_route_function_names_include_resource_name(self) -> None:
+        """Route functions are named after the resource for clear OpenAPI operation_ids."""
+        router = create_read_router(
+            prefix="/widgets",
+            tags=["widgets"],
+            model=Widget,
+            response_schema=WidgetResponse,
+            filter_config=WIDGET_FILTERS,
+            resource_name="Widget",
+        )
+
+        route_names = [route.name for route in router.routes]
+        # Function names should include the resource name, not generic "list_items"/"get_item"
+        assert "list_items" not in route_names, "list function should be resource-specific"
+        assert "get_item" not in route_names, "get function should be resource-specific"
+        assert any("widget" in name for name in route_names), (
+            f"Expected resource name in route names, got: {route_names}"
+        )
+
+
+class TestUniqueFilterParamsClassName:
+    """Test that make_filter_dependency produces unique class names."""
+
+    def test_different_resource_names_produce_different_class_names(self) -> None:
+        """make_filter_dependency with different resource names creates distinct classes."""
+        from jm_api.api.generic.filters import make_filter_dependency
+
+        config = [FilterField("name", FilterType.EXACT)]
+
+        cls_a = make_filter_dependency(config, resource_name="Widget")
+        cls_b = make_filter_dependency(config, resource_name="Gadget")
+
+        assert cls_a.__name__ != cls_b.__name__
+        assert "Widget" in cls_a.__name__
+        assert "Gadget" in cls_b.__name__
