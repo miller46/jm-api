@@ -7,12 +7,14 @@ import os
 import socket
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
 import pytest
 import uvicorn
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from jm_api.core.config import get_settings
 from jm_api.db.base import Base
@@ -119,15 +121,18 @@ def db_session(integration_server: str):
     session.close()
 
 
-def _do_clean_bots_table() -> None:
+def _do_clean_bots_table(session_factory: Callable[[], Session]) -> None:
     """Delete all rows from the bots table.
 
-    Shared helper so the autouse fixture and the ``clean_bots_table`` fixture
-    exercise the exact same code path.
-    """
-    from jm_api.main import app
+    Shared helper so the autouse fixture and the ``clean_bots_table_fn``
+    fixture exercise the exact same code path.
 
-    session = app.state.db_session_factory()
+    Args:
+        session_factory: A callable that returns a new SQLAlchemy ``Session``.
+            Making this an explicit parameter avoids a hidden dependency on
+            ``app.state`` being initialised before the helper is called.
+    """
+    session = session_factory()
     try:
         session.execute(text("DELETE FROM bots"))
         session.commit()
@@ -144,16 +149,27 @@ def _clean_bots_table(integration_server: str):
     down.  This avoids any dependency on teardown ordering between this fixture
     and ``db_session``.
     """
-    _do_clean_bots_table()
+    from jm_api.main import app
+
+    _do_clean_bots_table(app.state.db_session_factory)
     yield
 
 
 @pytest.fixture
-def clean_bots_table():
+def clean_bots_table_fn(integration_server: str):
     """Expose the cleanup helper for tests that need to invoke it explicitly.
 
-    Calls the same ``_do_clean_bots_table`` function that the autouse
-    ``_clean_bots_table`` fixture uses, so tests exercise the fixture's real
-    code path rather than duplicating the SQL inline.
+    Returns a callable that exercises the same ``_do_clean_bots_table``
+    function the autouse ``_clean_bots_table`` fixture uses.  The ``_fn``
+    suffix signals that receiving the fixture does *not* clean the table —
+    the caller must invoke the returned function.
+
+    Depends on ``integration_server`` to guarantee ``app.state`` is
+    initialised before use.
     """
-    return _do_clean_bots_table
+    from jm_api.main import app
+
+    def _clean():
+        _do_clean_bots_table(app.state.db_session_factory)
+
+    return _clean
