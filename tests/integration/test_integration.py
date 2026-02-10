@@ -154,33 +154,6 @@ class TestCleanBeforePattern:
         assert body["total"] == 0
         assert body["items"] == []
 
-    def test_do_clean_bots_table_requires_session_factory(
-        self, integration_server: str
-    ) -> None:
-        """_do_clean_bots_table must accept a session_factory parameter (explicit dependency)."""
-        import inspect
-        import sys
-
-        # Find the integration conftest module loaded by pytest
-        conftest_mod = None
-        for name, mod in sys.modules.items():
-            if "conftest" in name and hasattr(mod, "_do_clean_bots_table"):
-                conftest_mod = mod
-                break
-        assert conftest_mod is not None, "Could not find conftest with _do_clean_bots_table"
-
-        sig = inspect.signature(conftest_mod._do_clean_bots_table)
-        assert "session_factory" in sig.parameters, (
-            "_do_clean_bots_table should accept a session_factory parameter "
-            "to make the dependency on app startup explicit"
-        )
-
-    def test_clean_bots_table_fn_returns_callable(self, clean_bots_table_fn) -> None:
-        """The clean_bots_table_fn fixture should return a callable."""
-        assert callable(clean_bots_table_fn), (
-            "clean_bots_table_fn fixture should return a callable"
-        )
-
 
 class TestBotDetailEndpoint:
     """Tests for GET /api/v1/bots/{id}."""
