@@ -71,6 +71,9 @@ def integration_server():
         raise RuntimeError("Integration server did not become ready in time")
 
     # 4. Create schema tables using the app's own engine (single engine).
+    # NOTE: The server is already accepting requests at this point, but no
+    # test runs until this fixture yields.  If the app's lifespan ever adds
+    # its own ``create_all`` call, this step becomes redundant (not harmful).
     from jm_api.main import app
 
     engine = app.state.db_engine
@@ -118,13 +121,13 @@ def db_session(integration_server: str):
 
 @pytest.fixture(autouse=True)
 def _clean_bots_table(integration_server: str):
-    """Truncate the bots table after every test for full isolation.
+    """Truncate the bots table *before* every test for full isolation.
 
-    Using autouse ensures cleanup happens even when a test fails or raises,
-    removing the need for fragile try/finally blocks in individual tests.
+    Uses the "clean before" pattern: each test starts with a guaranteed-empty
+    table regardless of what the previous test did or how fixtures were torn
+    down.  This avoids any dependency on teardown ordering between this fixture
+    and ``db_session``.
     """
-    yield
-
     from jm_api.main import app
 
     session = app.state.db_session_factory()
@@ -133,3 +136,5 @@ def _clean_bots_table(integration_server: str):
         session.commit()
     finally:
         session.close()
+
+    yield

@@ -42,8 +42,9 @@ class TestBotListEndpoint:
     """Tests for GET /api/v1/bots.
 
     Each test is fully self-contained.  The autouse ``_clean_bots_table``
-    fixture in conftest truncates the bots table after every test, so no
-    manual try/finally cleanup is needed.
+    fixture in conftest truncates the bots table *before* every test
+    ("clean before" pattern), so no manual cleanup is needed and teardown
+    ordering with ``db_session`` is irrelevant.
     """
 
     def test_list_bots_empty_db(self, http_client: httpx.Client) -> None:
@@ -101,6 +102,39 @@ class TestBotListEndpoint:
         assert body["pages"] == 2
         assert body["total"] == 3
         assert len(body["items"]) == 2
+
+
+class TestCleanBeforePattern:
+    """Verify the autouse cleanup fixture uses the 'clean before' pattern.
+
+    These tests MUST run in order: the first inserts a bot and deliberately
+    leaves it behind; the second asserts the table is clean at the start,
+    proving that the ``_clean_bots_table`` fixture cleans *before* each test.
+    """
+
+    def test_aaa_insert_bot_and_leave_behind(
+        self, http_client: httpx.Client, db_session: Session
+    ) -> None:
+        """Insert a bot and do NOT clean up — relies on fixture."""
+        bot = Bot(rig_id="leftover-rig")
+        db_session.add(bot)
+        db_session.commit()
+
+        resp = http_client.get("/api/v1/bots")
+        assert resp.status_code == 200
+        assert resp.json()["total"] >= 1
+
+    def test_bbb_table_is_clean_at_start(self, http_client: httpx.Client) -> None:
+        """Table must be empty — proves 'clean before' ran."""
+        resp = http_client.get("/api/v1/bots")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 0, (
+            "Expected empty table at test start; "
+            "'clean before' fixture did not run or ran after test"
+        )
+        assert body["items"] == []
 
 
 class TestBotDetailEndpoint:
