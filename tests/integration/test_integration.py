@@ -39,9 +39,15 @@ class TestHealthEndpoint:
 
 
 class TestBotListEndpoint:
-    """Tests for GET /api/v1/bots."""
+    """Tests for GET /api/v1/bots.
+
+    Each test is fully self-contained.  The autouse ``_clean_bots_table``
+    fixture in conftest truncates the bots table after every test, so no
+    manual try/finally cleanup is needed.
+    """
 
     def test_list_bots_empty_db(self, http_client: httpx.Client) -> None:
+        """An empty bots table returns total=0 and no items."""
         resp = http_client.get("/api/v1/bots")
 
         assert resp.status_code == 200
@@ -57,16 +63,12 @@ class TestBotListEndpoint:
         db_session.commit()
         db_session.refresh(bot)
 
-        try:
-            resp = http_client.get("/api/v1/bots")
+        resp = http_client.get("/api/v1/bots")
 
-            assert resp.status_code == 200
-            body = resp.json()
-            items = body["items"]
-            assert any(item["rig_id"] == "test-rig" for item in items)
-        finally:
-            db_session.delete(bot)
-            db_session.commit()
+        assert resp.status_code == 200
+        body = resp.json()
+        items = body["items"]
+        assert any(item["rig_id"] == "test-rig" for item in items)
 
     def test_filter_bots_by_rig_id(
         self, http_client: httpx.Client, db_session: Session
@@ -76,17 +78,12 @@ class TestBotListEndpoint:
         db_session.add_all([bot1, bot2])
         db_session.commit()
 
-        try:
-            resp = http_client.get("/api/v1/bots", params={"rig_id": "test-rig-1"})
+        resp = http_client.get("/api/v1/bots", params={"rig_id": "test-rig-1"})
 
-            assert resp.status_code == 200
-            body = resp.json()
-            assert body["total"] == 1
-            assert body["items"][0]["rig_id"] == "test-rig-1"
-        finally:
-            db_session.delete(bot1)
-            db_session.delete(bot2)
-            db_session.commit()
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 1
+        assert body["items"][0]["rig_id"] == "test-rig-1"
 
     def test_list_bots_pagination(
         self, http_client: httpx.Client, db_session: Session
@@ -95,20 +92,15 @@ class TestBotListEndpoint:
         db_session.add_all(bots)
         db_session.commit()
 
-        try:
-            resp = http_client.get("/api/v1/bots", params={"page": 1, "per_page": 2})
+        resp = http_client.get("/api/v1/bots", params={"page": 1, "per_page": 2})
 
-            assert resp.status_code == 200
-            body = resp.json()
-            assert body["per_page"] == 2
-            assert body["page"] == 1
-            assert body["pages"] == 2
-            assert body["total"] == 3
-            assert len(body["items"]) == 2
-        finally:
-            for bot in bots:
-                db_session.delete(bot)
-            db_session.commit()
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["per_page"] == 2
+        assert body["page"] == 1
+        assert body["pages"] == 2
+        assert body["total"] == 3
+        assert len(body["items"]) == 2
 
 
 class TestBotDetailEndpoint:
@@ -122,16 +114,12 @@ class TestBotDetailEndpoint:
         db_session.commit()
         db_session.refresh(bot)
 
-        try:
-            resp = http_client.get(f"/api/v1/bots/{bot.id}")
+        resp = http_client.get(f"/api/v1/bots/{bot.id}")
 
-            assert resp.status_code == 200
-            body = resp.json()
-            assert body["id"] == bot.id
-            assert body["rig_id"] == "detail-rig"
-        finally:
-            db_session.delete(bot)
-            db_session.commit()
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["id"] == bot.id
+        assert body["rig_id"] == "detail-rig"
 
     def test_get_bot_nonexistent_returns_404(self, http_client: httpx.Client) -> None:
         # ID must be 32 alphanumeric chars to pass path validation

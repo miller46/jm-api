@@ -12,8 +12,7 @@ from pathlib import Path
 import httpx
 import pytest
 import uvicorn
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from jm_api.core.config import get_settings
 from jm_api.db.base import Base
@@ -34,18 +33,18 @@ def integration_server():
     """Start a real uvicorn server backed by a file-based SQLite DB.
 
     Yields the base URL (``http://127.0.0.1:<port>``).
+
+    The app's lifespan handler (``init_db``) creates the SQLAlchemy engine and
+    session factory and stores them in ``app.state``.  After the server is
+    ready we import the module-level ``app`` object and use its engine to
+    create the schema tables — this guarantees a single shared engine for both
+    the server and the test fixtures.
     """
     # 1. Point the app at the integration test database.
     os.environ["JM_API_DATABASE_URL"] = _DATABASE_URL
     get_settings.cache_clear()
 
-    settings = get_settings()
-
-    # 2. Create tables.
-    engine = create_engine(settings.database_url)
-    Base.metadata.create_all(engine)
-
-    # 3. Start uvicorn in a background thread.
+    # 2. Start uvicorn in a background thread.
     port = _find_free_port()
     config = uvicorn.Config(
         "jm_api.main:app",
@@ -58,7 +57,7 @@ def integration_server():
     thread = threading.Thread(target=asyncio.run, args=(server.serve(),), daemon=True)
     thread.start()
 
-    # 4. Wait until the server is ready.
+    # 3. Wait until the server is ready.
     base_url = f"http://127.0.0.1:{port}"
     for _ in range(30):
         try:
@@ -70,6 +69,12 @@ def integration_server():
         time.sleep(0.1)
     else:
         raise RuntimeError("Integration server did not become ready in time")
+
+    # 4. Create schema tables using the app's own engine (single engine).
+    from jm_api.main import app
+
+    engine = app.state.db_engine
+    Base.metadata.create_all(engine)
 
     yield base_url
 
@@ -97,13 +102,34 @@ def http_client(base_url: str):
 
 @pytest.fixture
 def db_session(integration_server: str):
-    """Yield a SQLAlchemy Session connected to the integration database.
+    """Yield a SQLAlchemy Session that shares the app's engine.
 
-    Rolls back and closes on teardown so each test starts clean.
+    Uses the same engine the server uses (via ``app.state``) so writes are
+    immediately visible to the running application.  Rolls back and closes on
+    teardown.
     """
-    engine = create_engine(_DATABASE_URL)
-    session = Session(bind=engine)
+    from jm_api.main import app
+
+    session = app.state.db_session_factory()
     yield session
     session.rollback()
     session.close()
-    engine.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _clean_bots_table(integration_server: str):
+    """Truncate the bots table after every test for full isolation.
+
+    Using autouse ensures cleanup happens even when a test fails or raises,
+    removing the need for fragile try/finally blocks in individual tests.
+    """
+    yield
+
+    from jm_api.main import app
+
+    session = app.state.db_session_factory()
+    try:
+        session.execute(text("DELETE FROM bots"))
+        session.commit()
+    finally:
+        session.close()
