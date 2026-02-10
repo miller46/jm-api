@@ -20,7 +20,8 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-addopts = "-q"
+markers = ["integration: full-stack integration tests (start real server)"]
+addopts = "-q -m 'not integration'"
 pythonpath = ["src"]
 testpaths = ["tests"]
 

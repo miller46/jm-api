@@ -1,0 +1,61 @@
+Create an integration test suite that starts a real uvicorn server, connects to a local SQLite database, and sends real HTTP requests over the network.
+
+## Isolation from Unit Tests
+
+Place all integration tests in `tests/integration/`.
+
+Register this directory as a custom pytest mark so `uv run pytest` (default testpaths: `tests/`) skips it automatically. Run integration tests explicitly:
+
+```bash
+uv run pytest tests/integration/ -m integration
+```
+
+Add to `pyproject.toml`:
+
+```toml
+[tool.pytest.ini_options]
+markers = ["integration: full-stack integration tests (start real server)"]
+```
+
+Exclude the `integration` mark from default runs by updating `addopts`:
+
+```toml
+addopts = "-q -m 'not integration'"
+```
+
+## Server Lifecycle
+
+Create a session-scoped fixture in `tests/integration/conftest.py`:
+
+1. Set `JM_API_DATABASE_URL` to a file-based SQLite path (e.g. `sqlite:///tmp/jm_integration_test.db`).
+2. Clear the `get_settings` LRU cache so the app picks up the test DB URL.
+3. Create all tables via `Base.metadata.create_all(engine)`.
+4. Start `uvicorn` serving `jm_api.main:app` on `127.0.0.1` with a free port (`port=0` or find an open port) in a background thread using `uvicorn.Server` + `threading.Thread`.
+5. Wait for the server to be ready (poll `GET /api/v1/healthz` with retries).
+6. Yield the base URL (e.g. `http://127.0.0.1:{port}`).
+7. On teardown: signal shutdown, join the thread, drop all tables, delete the SQLite file.
+
+Provide a `base_url` fixture and an `http_client` fixture (using `httpx.Client(base_url=...)`) for use in tests.
+
+## Test Cases
+
+Write integration tests covering:
+
+### Health
+- `GET /api/v1/healthz` returns 200 with `{"status": "ok"}`.
+- Response includes `X-Request-ID` header.
+
+### Bot Endpoints
+- `GET /api/v1/bots` returns 200 with empty list (`total: 0`).
+- After inserting a Bot row directly into the DB, `GET /api/v1/bots` returns it.
+- `GET /api/v1/bots/{id}` with valid ID returns the bot.
+- `GET /api/v1/bots/{id}` with nonexistent ID returns 404.
+- Query parameter filtering works (e.g. `?rig_id=test-rig`).
+- Pagination params (`page`, `per_page`) produce correct metadata.
+
+## Constraints
+
+- Use `httpx.Client` (not `TestClient`) to make real TCP requests.
+- Use `uv run` for all commands.
+- All assertions use standard pytest assertions.
+- Do not modify any existing test files.
