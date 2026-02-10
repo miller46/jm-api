@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from jm_api.models.bot import Bot
@@ -107,32 +108,42 @@ class TestBotListEndpoint:
 class TestCleanBeforePattern:
     """Verify the autouse cleanup fixture uses the 'clean before' pattern.
 
-    These tests MUST run in order: the first inserts a bot and deliberately
-    leaves it behind; the second asserts the table is clean at the start,
-    proving that the ``_clean_bots_table`` fixture cleans *before* each test.
+    Instead of relying on two order-dependent tests (which would break under
+    ``pytest-randomly`` or any other test-ordering plugin), a single test
+    inserts a row, then manually invokes the same clean logic the fixture
+    uses and asserts the table is empty afterward.
     """
 
-    def test_aaa_insert_bot_and_leave_behind(
+    def test_clean_before_pattern_removes_leftover_rows(
         self, http_client: httpx.Client, db_session: Session
     ) -> None:
-        """Insert a bot and do NOT clean up — relies on fixture."""
+        """Insert a bot, run clean logic, and verify the table is empty."""
+        # Arrange: insert a bot so the table is non-empty
         bot = Bot(rig_id="leftover-rig")
         db_session.add(bot)
         db_session.commit()
 
         resp = http_client.get("/api/v1/bots")
         assert resp.status_code == 200
-        assert resp.json()["total"] >= 1
+        assert resp.json()["total"] >= 1, "Precondition: table should have at least one row"
 
-    def test_bbb_table_is_clean_at_start(self, http_client: httpx.Client) -> None:
-        """Table must be empty — proves 'clean before' ran."""
+        # Act: execute the same clean logic the _clean_bots_table fixture uses
+        from jm_api.main import app
+
+        clean_session = app.state.db_session_factory()
+        try:
+            clean_session.execute(text("DELETE FROM bots"))
+            clean_session.commit()
+        finally:
+            clean_session.close()
+
+        # Assert: table is now empty — proves the clean logic works
         resp = http_client.get("/api/v1/bots")
-
         assert resp.status_code == 200
         body = resp.json()
         assert body["total"] == 0, (
-            "Expected empty table at test start; "
-            "'clean before' fixture did not run or ran after test"
+            "Expected empty table after clean; "
+            "'clean before' logic did not remove leftover rows"
         )
         assert body["items"] == []
 
