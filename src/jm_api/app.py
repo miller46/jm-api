@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.staticfiles import StaticFiles
 
 from jm_api.api.router import router as api_router
 from jm_api.core.config import get_settings
 from jm_api.core.lifespan import lifespan
 from jm_api.core.logging import configure_logging
 from jm_api.middleware.request_id import RequestIdMiddleware
+
+_STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def create_app() -> FastAPI:
@@ -40,5 +45,7 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    app.mount("/admin", StaticFiles(directory=str(_STATIC_DIR)), name="admin")
 
     return app
