@@ -7,12 +7,14 @@ import os
 import socket
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
 import pytest
 import uvicorn
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from jm_api.core.config import get_settings
 from jm_api.db.base import Base
@@ -119,7 +121,7 @@ def db_session(integration_server: str):
     session.close()
 
 
-def _do_clean_bots_table(session_factory) -> None:
+def _do_clean_bots_table(session_factory: Callable[[], Session]) -> None:
     """Delete all rows from the bots table.
 
     Shared helper so the autouse fixture and the ``clean_bots_table_fn``
