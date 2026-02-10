@@ -119,14 +119,11 @@ def db_session(integration_server: str):
     session.close()
 
 
-@pytest.fixture(autouse=True)
-def _clean_bots_table(integration_server: str):
-    """Truncate the bots table *before* every test for full isolation.
+def _do_clean_bots_table() -> None:
+    """Delete all rows from the bots table.
 
-    Uses the "clean before" pattern: each test starts with a guaranteed-empty
-    table regardless of what the previous test did or how fixtures were torn
-    down.  This avoids any dependency on teardown ordering between this fixture
-    and ``db_session``.
+    Shared helper so the autouse fixture and the ``clean_bots_table`` fixture
+    exercise the exact same code path.
     """
     from jm_api.main import app
 
@@ -137,4 +134,26 @@ def _clean_bots_table(integration_server: str):
     finally:
         session.close()
 
+
+@pytest.fixture(autouse=True)
+def _clean_bots_table(integration_server: str):
+    """Truncate the bots table *before* every test for full isolation.
+
+    Uses the "clean before" pattern: each test starts with a guaranteed-empty
+    table regardless of what the previous test did or how fixtures were torn
+    down.  This avoids any dependency on teardown ordering between this fixture
+    and ``db_session``.
+    """
+    _do_clean_bots_table()
     yield
+
+
+@pytest.fixture
+def clean_bots_table():
+    """Expose the cleanup helper for tests that need to invoke it explicitly.
+
+    Calls the same ``_do_clean_bots_table`` function that the autouse
+    ``_clean_bots_table`` fixture uses, so tests exercise the fixture's real
+    code path rather than duplicating the SQL inline.
+    """
+    return _do_clean_bots_table

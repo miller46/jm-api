@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from jm_api.models.bot import Bot
@@ -109,15 +108,16 @@ class TestCleanBeforePattern:
     """Verify the autouse cleanup fixture uses the 'clean before' pattern.
 
     Instead of relying on two order-dependent tests (which would break under
-    ``pytest-randomly`` or any other test-ordering plugin), a single test
-    inserts a row, then manually invokes the same clean logic the fixture
-    uses and asserts the table is empty afterward.
+    ``pytest-randomly``), a single test inserts a row, then invokes the same
+    ``clean_bots_table`` helper that the ``_clean_bots_table`` fixture calls,
+    and asserts the table is empty afterward.  This proves the fixture's
+    actual code path works correctly.
     """
 
     def test_clean_before_pattern_removes_leftover_rows(
-        self, http_client: httpx.Client, db_session: Session
+        self, http_client: httpx.Client, db_session: Session, clean_bots_table
     ) -> None:
-        """Insert a bot, run clean logic, and verify the table is empty."""
+        """Insert a bot, run the fixture's cleanup helper, verify table is empty."""
         # Arrange: insert a bot so the table is non-empty
         bot = Bot(rig_id="leftover-rig")
         db_session.add(bot)
@@ -127,24 +127,31 @@ class TestCleanBeforePattern:
         assert resp.status_code == 200
         assert resp.json()["total"] >= 1, "Precondition: table should have at least one row"
 
-        # Act: execute the same clean logic the _clean_bots_table fixture uses
-        from jm_api.main import app
+        # Act: call the same helper the _clean_bots_table fixture uses
+        clean_bots_table()
 
-        clean_session = app.state.db_session_factory()
-        try:
-            clean_session.execute(text("DELETE FROM bots"))
-            clean_session.commit()
-        finally:
-            clean_session.close()
-
-        # Assert: table is now empty — proves the clean logic works
+        # Assert: table is now empty — proves the fixture's cleanup logic works
         resp = http_client.get("/api/v1/bots")
         assert resp.status_code == 200
         body = resp.json()
         assert body["total"] == 0, (
             "Expected empty table after clean; "
-            "'clean before' logic did not remove leftover rows"
+            "clean_bots_table() did not remove leftover rows"
         )
+        assert body["items"] == []
+
+    def test_clean_before_pattern_is_idempotent(
+        self, http_client: httpx.Client, clean_bots_table
+    ) -> None:
+        """Calling the cleanup helper on an already-empty table is safe."""
+        # Act: call cleanup on an already-clean table (autouse fixture already ran)
+        clean_bots_table()
+
+        # Assert: table is still empty — no error from cleaning an empty table
+        resp = http_client.get("/api/v1/bots")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["total"] == 0
         assert body["items"] == []
 
 
