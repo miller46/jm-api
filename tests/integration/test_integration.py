@@ -109,13 +109,13 @@ class TestCleanBeforePattern:
 
     Instead of relying on two order-dependent tests (which would break under
     ``pytest-randomly``), a single test inserts a row, then invokes the same
-    ``clean_bots_table`` helper that the ``_clean_bots_table`` fixture calls,
-    and asserts the table is empty afterward.  This proves the fixture's
-    actual code path works correctly.
+    ``clean_bots_table_fn`` helper that the ``_clean_bots_table`` fixture
+    calls, and asserts the table is empty afterward.  This proves the
+    fixture's actual code path works correctly.
     """
 
     def test_clean_before_pattern_removes_leftover_rows(
-        self, http_client: httpx.Client, db_session: Session, clean_bots_table
+        self, http_client: httpx.Client, db_session: Session, clean_bots_table_fn
     ) -> None:
         """Insert a bot, run the fixture's cleanup helper, verify table is empty."""
         # Arrange: insert a bot so the table is non-empty
@@ -128,7 +128,7 @@ class TestCleanBeforePattern:
         assert resp.json()["total"] >= 1, "Precondition: table should have at least one row"
 
         # Act: call the same helper the _clean_bots_table fixture uses
-        clean_bots_table()
+        clean_bots_table_fn()
 
         # Assert: table is now empty — proves the fixture's cleanup logic works
         resp = http_client.get("/api/v1/bots")
@@ -136,16 +136,16 @@ class TestCleanBeforePattern:
         body = resp.json()
         assert body["total"] == 0, (
             "Expected empty table after clean; "
-            "clean_bots_table() did not remove leftover rows"
+            "clean_bots_table_fn() did not remove leftover rows"
         )
         assert body["items"] == []
 
     def test_clean_before_pattern_is_idempotent(
-        self, http_client: httpx.Client, clean_bots_table
+        self, http_client: httpx.Client, clean_bots_table_fn
     ) -> None:
         """Calling the cleanup helper on an already-empty table is safe."""
         # Act: call cleanup on an already-clean table (autouse fixture already ran)
-        clean_bots_table()
+        clean_bots_table_fn()
 
         # Assert: table is still empty — no error from cleaning an empty table
         resp = http_client.get("/api/v1/bots")
@@ -153,6 +153,33 @@ class TestCleanBeforePattern:
         body = resp.json()
         assert body["total"] == 0
         assert body["items"] == []
+
+    def test_do_clean_bots_table_requires_session_factory(
+        self, integration_server: str
+    ) -> None:
+        """_do_clean_bots_table must accept a session_factory parameter (explicit dependency)."""
+        import inspect
+        import sys
+
+        # Find the integration conftest module loaded by pytest
+        conftest_mod = None
+        for name, mod in sys.modules.items():
+            if "conftest" in name and hasattr(mod, "_do_clean_bots_table"):
+                conftest_mod = mod
+                break
+        assert conftest_mod is not None, "Could not find conftest with _do_clean_bots_table"
+
+        sig = inspect.signature(conftest_mod._do_clean_bots_table)
+        assert "session_factory" in sig.parameters, (
+            "_do_clean_bots_table should accept a session_factory parameter "
+            "to make the dependency on app startup explicit"
+        )
+
+    def test_clean_bots_table_fn_returns_callable(self, clean_bots_table_fn) -> None:
+        """The clean_bots_table_fn fixture should return a callable."""
+        assert callable(clean_bots_table_fn), (
+            "clean_bots_table_fn fixture should return a callable"
+        )
 
 
 class TestBotDetailEndpoint:
