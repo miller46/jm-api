@@ -10,8 +10,8 @@ uv pip install -e ".[dev]"
 JM_API_DATABASE_URL=sqlite:///./dev.db uv run uvicorn jm_api.main:app --reload
 ```
 
-`DATABASE_URL` is required (no default). For local development any SQLite URL works.
-SQLite is rejected when `ENVIRONMENT` is `production` or `staging`.
+`JM_API_DATABASE_URL` is required (no default). For local development any SQLite URL works.
+SQLite is rejected when `JM_API_ENVIRONMENT` is `production` or `staging`.
 
 ## Project Structure
 
@@ -73,17 +73,17 @@ Environment variables are prefixed with `JM_API_` and can be loaded from `.env`.
 Comma-separated values are supported for list settings like `ALLOW_ORIGINS` and
 `ALLOWED_HOSTS`.
 
-| Variable              | Default          | Notes                                     |
-|-----------------------|------------------|-------------------------------------------|
-| `DATABASE_URL`        | *(required)*     | SQLAlchemy connection string              |
-| `ENVIRONMENT`         | `development`    | `production`/`staging` reject SQLite      |
-| `DEBUG`               | `false`          |                                           |
-| `LOG_LEVEL`           | `INFO`           |                                           |
-| `API_V1_PREFIX`       | `/api/v1`        |                                           |
-| `DOCS_ENABLED`        | `true`           | Toggles `/docs`, `/redoc`, `/openapi.json` |
-| `REQUEST_ID_HEADER`   | `X-Request-ID`   |                                           |
-| `ALLOW_ORIGINS`       | *(empty)*        | Comma-separated CORS origins              |
-| `ALLOWED_HOSTS`       | *(empty)*        | Comma-separated trusted hosts             |
+| Variable                   | Default          | Notes                                     |
+|----------------------------|------------------|-------------------------------------------|
+| `JM_API_DATABASE_URL`      | *(required)*     | SQLAlchemy connection string              |
+| `JM_API_ENVIRONMENT`       | `development`    | `production`/`staging` reject SQLite      |
+| `JM_API_DEBUG`             | `false`          |                                           |
+| `JM_API_LOG_LEVEL`         | `INFO`           |                                           |
+| `JM_API_API_V1_PREFIX`     | `/api/v1`        |                                           |
+| `JM_API_DOCS_ENABLED`      | `true`           | Toggles `/docs`, `/redoc`, `/openapi.json` |
+| `JM_API_REQUEST_ID_HEADER` | `X-Request-ID`   |                                           |
+| `JM_API_ALLOW_ORIGINS`     | *(empty)*        | Comma-separated CORS origins              |
+| `JM_API_ALLOWED_HOSTS`     | *(empty)*        | Comma-separated trusted hosts             |
 
 See `.env.example` for defaults and guidance.
 
