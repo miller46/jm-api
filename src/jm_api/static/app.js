@@ -16,6 +16,11 @@ function initTablePage() {
     return;
   }
 
+  if (!TABLES.includes(table)) {
+    showError("Unknown table: " + table);
+    return;
+  }
+
   const titleEl = document.getElementById("table-title");
   if (titleEl) {
     titleEl.textContent = table;
@@ -53,25 +58,26 @@ function renderTable(headers, items) {
   var thead = document.getElementById("table-head");
   var tbody = document.getElementById("table-body");
 
-  // Build header row
-  var headerRow = "<tr>";
+  // Build header row using safe DOM APIs
+  var headerRow = document.createElement("tr");
   for (var i = 0; i < headers.length; i++) {
-    headerRow += "<th>" + headers[i] + "</th>";
+    var th = document.createElement("th");
+    th.textContent = headers[i];
+    headerRow.appendChild(th);
   }
-  headerRow += "</tr>";
-  thead.innerHTML = headerRow;
+  thead.appendChild(headerRow);
 
-  // Build body rows
-  var bodyHtml = "";
+  // Build body rows using safe DOM APIs
   for (var r = 0; r < items.length; r++) {
-    bodyHtml += "<tr>";
+    var tr = document.createElement("tr");
     for (var c = 0; c < headers.length; c++) {
+      var td = document.createElement("td");
       var val = items[r][headers[c]];
-      bodyHtml += "<td>" + (val !== null && val !== undefined ? val : "") + "</td>";
+      td.textContent = val !== null && val !== undefined ? val : "";
+      tr.appendChild(td);
     }
-    bodyHtml += "</tr>";
+    tbody.appendChild(tr);
   }
-  tbody.innerHTML = bodyHtml;
 }
 
 function showError(message) {

@@ -318,7 +318,7 @@ class TestAppJsContent:
         """app.js must create table rows (tr elements)."""
         has_row_creation = any(
             token in self.js
-            for token in ["<tr", "createElement", "insertRow", "innerHTML"]
+            for token in ["<tr", "createElement", "insertRow"]
         )
         assert has_row_creation, "Expected table row creation logic in app.js"
 
@@ -341,6 +341,79 @@ class TestAppJsContent:
     def test_displays_error_message(self) -> None:
         """app.js must display an error message to the user on failure."""
         assert "error" in self.js.lower()
+
+
+# ===================================================================
+# Sub-task 6: Security — XSS prevention and input validation
+# ===================================================================
+
+
+class TestAppJsSecurity:
+    """Verify app.js is free of XSS and input-validation issues."""
+
+    @pytest.fixture(autouse=True)
+    def _load_js(self) -> None:
+        self.js = _read_static("app.js")
+
+    # -- XSS prevention: DOM APIs instead of innerHTML --
+
+    def test_render_table_does_not_use_innerHTML(self) -> None:
+        """renderTable must NOT use innerHTML to build table rows/headers.
+
+        innerHTML with string concatenation of untrusted data is an XSS vector.
+        The code should use safe DOM APIs (createElement + textContent) instead.
+        """
+        # Extract the renderTable function body
+        start = self.js.index("function renderTable")
+        # Find the closing brace by tracking brace depth
+        depth = 0
+        end = start
+        for i, ch in enumerate(self.js[start:], start=start):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        render_body = self.js[start:end]
+        assert "innerHTML" not in render_body, (
+            "renderTable must not use innerHTML — use createElement/textContent instead"
+        )
+
+    def test_uses_create_element_for_table_rendering(self) -> None:
+        """renderTable must use document.createElement for safe DOM construction."""
+        assert "createElement" in self.js, (
+            "Expected document.createElement usage for XSS-safe table rendering"
+        )
+
+    def test_uses_text_content_for_cell_values(self) -> None:
+        """renderTable must use textContent (not innerHTML) to set cell text."""
+        assert "textContent" in self.js, (
+            "Expected textContent usage to safely set cell text values"
+        )
+
+    # -- Input validation: table query param against TABLES array --
+
+    def test_validates_table_param_against_tables_array(self) -> None:
+        """app.js must validate the table query param against the TABLES array.
+
+        The TABLES constant is defined but must be used to reject unknown table
+        names before the fetch call — preventing path traversal / arbitrary requests.
+        """
+        assert "TABLES.includes" in self.js, (
+            "Expected TABLES.includes() check to validate table query param"
+        )
+
+    def test_shows_error_for_unknown_table(self) -> None:
+        """When table param is not in TABLES, app.js must call showError."""
+        # After the TABLES.includes check there should be a showError call
+        includes_idx = self.js.index("TABLES.includes")
+        # The showError call should appear shortly after the includes check
+        following_code = self.js[includes_idx:includes_idx + 200]
+        assert "showError" in following_code, (
+            "Expected showError() call when table is not in TABLES array"
+        )
 
 
 # ===================================================================
