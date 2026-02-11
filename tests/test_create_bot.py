@@ -98,3 +98,57 @@ class TestCreateBotValidation:
         data = response.json()
         # id should be auto-generated, not the one we passed
         assert data["id"] != "custom_id_should_be_ignored_xxxxx"
+
+
+class TestBotOpenAPICreateSchema:
+    """Test that the OpenAPI spec exposes BotCreate schema fields correctly.
+
+    The frontend form uses the OpenAPI schema to discover editable fields,
+    so the schema must only contain user-editable fields (no auto-managed ones).
+    """
+
+    def test_openapi_has_bot_create_schema(self, client: TestClient) -> None:
+        """OpenAPI spec includes BotCreate schema."""
+        response = client.get("/openapi.json")
+        assert response.status_code == 200
+        schema = response.json()
+        schemas = schema.get("components", {}).get("schemas", {})
+        assert "BotCreate" in schemas
+
+    def test_bot_create_schema_has_only_editable_fields(
+        self, client: TestClient
+    ) -> None:
+        """BotCreate schema contains only user-editable fields, not auto-managed ones."""
+        response = client.get("/openapi.json")
+        schema = response.json()
+        bot_create = schema["components"]["schemas"]["BotCreate"]
+        props = set(bot_create.get("properties", {}).keys())
+        # Only user-editable fields should be present
+        assert props == {"rig_id", "kill_switch", "last_run_log"}
+
+    def test_bot_create_schema_excludes_auto_fields(
+        self, client: TestClient
+    ) -> None:
+        """BotCreate schema does not contain auto-managed fields."""
+        response = client.get("/openapi.json")
+        schema = response.json()
+        bot_create = schema["components"]["schemas"]["BotCreate"]
+        props = set(bot_create.get("properties", {}).keys())
+        auto_fields = {"id", "create_at", "last_update_at", "last_run_at"}
+        assert props.isdisjoint(auto_fields), (
+            f"Auto-managed fields found in BotCreate schema: {props & auto_fields}"
+        )
+
+    def test_post_bots_endpoint_references_create_schema(
+        self, client: TestClient
+    ) -> None:
+        """POST /api/v1/bots references BotCreate as request body schema."""
+        response = client.get("/openapi.json")
+        schema = response.json()
+        post_path = schema.get("paths", {}).get("/api/v1/bots", {}).get("post", {})
+        req_body = post_path.get("requestBody", {})
+        json_schema = (
+            req_body.get("content", {}).get("application/json", {}).get("schema", {})
+        )
+        ref = json_schema.get("$ref", "")
+        assert "BotCreate" in ref

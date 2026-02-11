@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import Boolean, String, Text
+from sqlalchemy import Boolean, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, Session, mapped_column, sessionmaker
 
 from jm_api.api.generic.filters import FilterField, FilterType
@@ -25,6 +25,7 @@ class Gadget(TimestampedIdBase):
     """Minimal model for testing generic create router."""
 
     __tablename__ = "gadgets_create"
+    __table_args__ = (UniqueConstraint("name", name="uq_gadgets_name"),)
 
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -194,3 +195,86 @@ class TestGenericCreateRouteNaming:
         assert any("gadget" in name for name in route_names), (
             f"Expected resource name in route names, got: {route_names}"
         )
+
+
+class TestGenericCreateIntegrityError:
+    """Test that database integrity errors are handled gracefully."""
+
+    def test_duplicate_unique_field_returns_409(self, gadget_client: TestClient) -> None:
+        """Duplicate unique field returns 409 Conflict instead of 500."""
+        gadget_client.post("/gadgets", json={"name": "unique-gadget"})
+        response = gadget_client.post("/gadgets", json={"name": "unique-gadget"})
+        assert response.status_code == 409
+
+    def test_duplicate_unique_field_returns_error_detail(
+        self, gadget_client: TestClient
+    ) -> None:
+        """Duplicate unique field returns a meaningful error message."""
+        gadget_client.post("/gadgets", json={"name": "unique-gadget-2"})
+        response = gadget_client.post("/gadgets", json={"name": "unique-gadget-2"})
+        data = response.json()
+        assert "detail" in data
+        assert isinstance(data["detail"], str)
+        assert len(data["detail"]) > 0
+
+    def test_session_usable_after_integrity_error(
+        self, gadget_client: TestClient
+    ) -> None:
+        """Session remains usable after an IntegrityError is handled."""
+        gadget_client.post("/gadgets", json={"name": "gadget-a"})
+        # Trigger integrity error
+        response = gadget_client.post("/gadgets", json={"name": "gadget-a"})
+        assert response.status_code == 409
+        # Session should still work for subsequent requests
+        response = gadget_client.post("/gadgets", json={"name": "gadget-b"})
+        assert response.status_code == 201
+        assert response.json()["name"] == "gadget-b"
+
+
+class TestGenericCreateOpenAPISchema:
+    """Test that the OpenAPI spec exposes create schema fields for field discovery."""
+
+    def test_openapi_has_create_schema(self, gadget_client: TestClient) -> None:
+        """OpenAPI spec includes GadgetCreate schema."""
+        response = gadget_client.get("/openapi.json")
+        assert response.status_code == 200
+        schema = response.json()
+        schemas = schema.get("components", {}).get("schemas", {})
+        assert "GadgetCreate" in schemas
+
+    def test_create_schema_has_only_editable_fields(
+        self, gadget_client: TestClient
+    ) -> None:
+        """Create schema contains only user-editable fields, not auto-managed ones."""
+        response = gadget_client.get("/openapi.json")
+        schema = response.json()
+        gadget_create = schema["components"]["schemas"]["GadgetCreate"]
+        props = set(gadget_create.get("properties", {}).keys())
+        assert props == {"name", "active", "description"}
+
+    def test_create_schema_excludes_auto_fields(
+        self, gadget_client: TestClient
+    ) -> None:
+        """Create schema does not contain auto-managed fields."""
+        response = gadget_client.get("/openapi.json")
+        schema = response.json()
+        gadget_create = schema["components"]["schemas"]["GadgetCreate"]
+        props = set(gadget_create.get("properties", {}).keys())
+        auto_fields = {"id", "create_at", "last_update_at"}
+        assert props.isdisjoint(auto_fields), (
+            f"Auto-managed fields found in create schema: {props & auto_fields}"
+        )
+
+    def test_post_endpoint_references_create_schema(
+        self, gadget_client: TestClient
+    ) -> None:
+        """POST /gadgets references GadgetCreate as request body schema."""
+        response = gadget_client.get("/openapi.json")
+        schema = response.json()
+        post_path = schema.get("paths", {}).get("/gadgets", {}).get("post", {})
+        req_body = post_path.get("requestBody", {})
+        json_schema = (
+            req_body.get("content", {}).get("application/json", {}).get("schema", {})
+        )
+        ref = json_schema.get("$ref", "")
+        assert "GadgetCreate" in ref

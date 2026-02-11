@@ -8,8 +8,9 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from starlette.status import HTTP_201_CREATED
+from starlette.status import HTTP_201_CREATED, HTTP_409_CONFLICT
 
 from jm_api.db.session import get_db
 from jm_api.schemas.generic import ListResponse, NotFoundError
@@ -148,7 +149,14 @@ def create_create_router(
     def create_item(payload, *, db: Session = Depends(get_db)) -> Any:
         item = model(**payload.model_dump())
         db.add(item)
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(
+                status_code=HTTP_409_CONFLICT,
+                detail=f"Record conflicts with an existing entry: {exc.orig}",
+            ) from exc
         db.refresh(item)
         return response_schema.model_validate(item)
 
