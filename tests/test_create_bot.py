@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 
 class TestCreateBotSuccess:
@@ -98,3 +101,15 @@ class TestCreateBotValidation:
         data = response.json()
         # id should be auto-generated, not the one we passed
         assert data["id"] != "custom_id_should_be_ignored_xxxxx"
+
+
+class TestCreateBotDatabaseErrors:
+    """Test POST /api/v1/bots handles database errors gracefully."""
+
+    def test_db_integrity_error_returns_409(self, client: TestClient) -> None:
+        """IntegrityError during commit returns 409 with useful message."""
+        with patch("jm_api.api.generic.router.Session.commit", side_effect=IntegrityError("", {}, Exception("UNIQUE constraint"))):
+            response = client.post("/api/v1/bots", json={"rig_id": "rig-err"})
+        assert response.status_code == 409
+        data = response.json()
+        assert "detail" in data

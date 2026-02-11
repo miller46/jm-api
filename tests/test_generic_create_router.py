@@ -26,7 +26,7 @@ class Gadget(TimestampedIdBase):
 
     __tablename__ = "gadgets_create"
 
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     description: Mapped[str | None] = mapped_column(Text, default=None)
 
@@ -177,6 +177,36 @@ class TestGenericCreateValidation:
             headers={"Content-Type": "application/json"},
         )
         assert response.status_code == 422
+
+
+class TestGenericCreateIntegrityError:
+    """Test that database integrity errors are handled gracefully."""
+
+    def test_duplicate_unique_field_returns_409(self, gadget_client: TestClient) -> None:
+        """Duplicate value on unique column returns 409 Conflict."""
+        gadget_client.post("/gadgets", json={"name": "duplicate-me"})
+        response = gadget_client.post("/gadgets", json={"name": "duplicate-me"})
+        assert response.status_code == 409
+
+    def test_duplicate_unique_field_returns_useful_message(self, gadget_client: TestClient) -> None:
+        """409 response includes meaningful error detail."""
+        gadget_client.post("/gadgets", json={"name": "dup-msg"})
+        response = gadget_client.post("/gadgets", json={"name": "dup-msg"})
+        data = response.json()
+        assert "detail" in data
+        assert isinstance(data["detail"], str)
+        assert len(data["detail"]) > 0
+
+    def test_session_usable_after_integrity_error(self, gadget_client: TestClient) -> None:
+        """Session remains usable after a failed create (proper rollback)."""
+        gadget_client.post("/gadgets", json={"name": "first"})
+        # This fails with IntegrityError
+        response = gadget_client.post("/gadgets", json={"name": "first"})
+        assert response.status_code == 409
+        # Session should still work for a new, valid create
+        response = gadget_client.post("/gadgets", json={"name": "second"})
+        assert response.status_code == 201
+        assert response.json()["name"] == "second"
 
 
 class TestGenericCreateRouteNaming:

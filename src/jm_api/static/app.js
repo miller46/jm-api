@@ -93,8 +93,6 @@ function showError(message) {
   }
 }
 
-var AUTO_FIELDS = ["id", "create_at", "last_update_at", "last_run_at"];
-
 function initCreatePage() {
   var params = new URLSearchParams(location.search);
   var table = params.get("table");
@@ -109,18 +107,20 @@ function initCreatePage() {
     titleEl.textContent = "Create " + table + " Record";
   }
 
-  // Fetch one record to discover field names
-  fetch("/api/v1/" + table + "?per_page=1")
+  // Discover create-schema fields from the OpenAPI spec.
+  // This avoids hardcoding auto-fields and works even when the table is empty.
+  fetch("/openapi.json")
     .then(function (response) {
       if (!response.ok) {
         throw new Error("HTTP " + response.status);
       }
       return response.json();
     })
-    .then(function (data) {
-      var fields = [];
-      if (data.items && data.items.length > 0) {
-        fields = Object.keys(data.items[0]);
+    .then(function (spec) {
+      var fields = discoverCreateFields(spec, table);
+      if (!fields || fields.length === 0) {
+        showError("Cannot determine fields for " + table + " from API schema.");
+        return;
       }
       renderCreateForm(table, fields);
     })
@@ -129,21 +129,55 @@ function initCreatePage() {
     });
 }
 
+/**
+ * Extract field names from the OpenAPI create schema for the given table.
+ * Looks for a POST endpoint on /api/v1/{table} and reads its requestBody schema.
+ */
+function discoverCreateFields(spec, table) {
+  var pathKey = "/api/v1/" + table;
+  var pathObj = spec.paths && spec.paths[pathKey];
+  if (!pathObj || !pathObj.post) return [];
+
+  var requestBody = pathObj.post.requestBody;
+  if (!requestBody) return [];
+
+  var content = requestBody.content && requestBody.content["application/json"];
+  if (!content || !content.schema) return [];
+
+  var schema = content.schema;
+
+  // Resolve $ref if present (e.g. "#/components/schemas/BotCreate")
+  if (schema["$ref"]) {
+    schema = resolveRef(spec, schema["$ref"]);
+  }
+
+  if (!schema || !schema.properties) return [];
+
+  return Object.keys(schema.properties);
+}
+
+/**
+ * Resolve a JSON $ref pointer within the OpenAPI spec.
+ * Handles refs like "#/components/schemas/BotCreate".
+ */
+function resolveRef(spec, ref) {
+  if (!ref || ref.charAt(0) !== "#") return null;
+  var parts = ref.substring(2).split("/");
+  var current = spec;
+  for (var i = 0; i < parts.length; i++) {
+    current = current[parts[i]];
+    if (!current) return null;
+  }
+  return current;
+}
+
 function renderCreateForm(table, fields) {
   var form = document.getElementById("create-form");
   if (!form) return;
 
-  // Filter out auto-managed fields
-  var editableFields = [];
-  for (var i = 0; i < fields.length; i++) {
-    if (AUTO_FIELDS.indexOf(fields[i]) === -1) {
-      editableFields.push(fields[i]);
-    }
-  }
-
   var html = "";
-  for (var j = 0; j < editableFields.length; j++) {
-    var field = editableFields[j];
+  for (var j = 0; j < fields.length; j++) {
+    var field = fields[j];
     html += '<div class="form-group">';
     html += '<label for="field-' + field + '">' + field + "</label>";
     html += '<input type="text" id="field-' + field + '" name="' + field + '">';
@@ -154,7 +188,7 @@ function renderCreateForm(table, fields) {
 
   form.addEventListener("submit", function (e) {
     e.preventDefault();
-    submitCreateForm(table, editableFields);
+    submitCreateForm(table, fields);
   });
 }
 
