@@ -1,11 +1,13 @@
-"""Bot read endpoints — declarative config using the generic CRUD layer."""
+"""Bot CRUD endpoints — declarative config using the generic CRUD layer."""
 
 from __future__ import annotations
 
-from jm_api.api.generic import create_read_router
+from fastapi import APIRouter
+
+from jm_api.api.generic import create_create_router, create_read_router
 from jm_api.api.generic.filters import FilterField, FilterType
 from jm_api.models.bot import Bot
-from jm_api.schemas.bot import BotResponse
+from jm_api.schemas.bot import BotCreate, BotResponse
 
 BOT_FILTERS = [
     FilterField("rig_id", FilterType.EXACT),
@@ -16,7 +18,7 @@ BOT_FILTERS = [
     FilterField("last_run_at", FilterType.DATE_RANGE),
 ]
 
-router = create_read_router(
+_read_router = create_read_router(
     prefix="/bots",
     tags=["bots"],
     model=Bot,
@@ -24,3 +26,16 @@ router = create_read_router(
     filter_config=BOT_FILTERS,
     resource_name="Bot",
 )
+
+_create_router = create_create_router(
+    prefix="/bots",
+    tags=["bots"],
+    model=Bot,
+    response_schema=BotResponse,
+    create_schema=BotCreate,
+    resource_name="Bot",
+)
+
+router = APIRouter()
+router.include_router(_read_router)
+router.include_router(_create_router)

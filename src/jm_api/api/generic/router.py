@@ -1,4 +1,4 @@
-"""Generic read router factory for declarative CRUD endpoints."""
+"""Generic router factories for declarative CRUD endpoints."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from starlette.status import HTTP_201_CREATED
 
 from jm_api.db.session import get_db
 from jm_api.schemas.generic import ListResponse, NotFoundError
@@ -111,5 +112,56 @@ def create_read_router(
     # Rename functions for unique OpenAPI operation_ids across multiple routers
     list_items.__name__ = f"list_{name_lower}s"
     get_item.__name__ = f"get_{name_lower}"
+
+    return router
+
+
+def create_create_router(
+    *,
+    prefix: str,
+    tags: list[str],
+    model: type,
+    response_schema: type,
+    create_schema: type,
+    resource_name: str,
+) -> APIRouter:
+    """Create an APIRouter with a POST endpoint for creating records.
+
+    Args:
+        prefix: URL prefix (e.g. "/bots").
+        tags: OpenAPI tags.
+        model: SQLAlchemy model class.
+        response_schema: Pydantic response schema.
+        create_schema: Pydantic schema for the request body.
+        resource_name: Human-readable name for operation naming.
+
+    Returns:
+        Configured APIRouter with POST "" route.
+    """
+    router = APIRouter(prefix=prefix, tags=tags)
+    name_lower = resource_name.lower()
+
+    # Build endpoint function with proper annotations for FastAPI.
+    # We can't use `payload: create_schema` directly because
+    # `from __future__ import annotations` turns it into a string literal.
+    # Instead, we set __annotations__ manually on the function.
+    def create_item(payload, *, db: Session = Depends(get_db)) -> Any:
+        item = model(**payload.model_dump())
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+        return response_schema.model_validate(item)
+
+    create_item.__annotations__["payload"] = create_schema
+    create_item.__name__ = f"create_{name_lower}"
+
+    router.add_api_route(
+        "",
+        create_item,
+        methods=["POST"],
+        response_model=response_schema,
+        status_code=HTTP_201_CREATED,
+        name=f"create_{name_lower}",
+    )
 
     return router

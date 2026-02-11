@@ -7,6 +7,24 @@ from pydantic import ConfigDict, BaseModel
 from jm_api.schemas.generic import ListResponse
 
 
+class BotCreate(BaseModel):
+    """Schema for creating a new bot. Only user-editable fields."""
+
+    rig_id: str
+    kill_switch: bool = False
+    last_run_log: str | None = None
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "rig_id": "rig-001",
+                "kill_switch": False,
+                "last_run_log": None,
+            }
+        },
+    )
+
+
 class BotResponse(BaseModel):
     """Single bot response schema."""
 
