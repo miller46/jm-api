@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from jm_api.api.generic import create_create_router, create_read_router, create_update_router
+from jm_api.api.generic import (
+    create_create_router,
+    create_delete_router,
+    create_read_router,
+    create_update_router,
+)
 from jm_api.api.generic.filters import FilterField, FilterType
 from jm_api.models.bot import Bot
 from jm_api.schemas.bot import BotCreate, BotResponse, BotUpdate
@@ -45,7 +50,15 @@ _update_router = create_update_router(
     resource_name="Bot",
 )
 
+_delete_router = create_delete_router(
+    prefix="/bots",
+    tags=["bots"],
+    model=Bot,
+    resource_name="Bot",
+)
+
 router = APIRouter()
 router.include_router(_read_router)
 router.include_router(_create_router)
 router.include_router(_update_router)
+router.include_router(_delete_router)

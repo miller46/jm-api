@@ -299,6 +299,28 @@ function renderEditForm(table, id, fields, record) {
   btn.textContent = "Save";
   form.appendChild(btn);
 
+  var deleteBtn = document.createElement("button");
+  deleteBtn.setAttribute("type", "button");
+  deleteBtn.setAttribute("class", "btn btn-danger");
+  deleteBtn.textContent = "Delete";
+  deleteBtn.addEventListener("click", function () {
+    if (confirm("Are you sure you want to delete this record?")) {
+      fetch("/api/v1/" + table + "/" + id, { method: "DELETE" })
+        .then(function (response) {
+          if (!response.ok) {
+            return response.json().then(function (err) {
+              throw new Error(formatError(err));
+            });
+          }
+          location.href = "table.html?table=" + encodeURIComponent(table);
+        })
+        .catch(function (err) {
+          showError(err.message);
+        });
+    }
+  });
+  form.appendChild(deleteBtn);
+
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     submitEditForm(table, id, fields);
