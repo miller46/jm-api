@@ -33,8 +33,6 @@ document.addEventListener("DOMContentLoaded", function () {
     initEditPage();
   } else if (document.getElementById("create-form")) {
     initCreatePage();
-  } else if (document.getElementById("edit-form")) {
-    initEditPage();
   }
 });
 
@@ -484,10 +482,6 @@ function submitCreateForm(table, fields) {
     .catch(function (err) {
       showError(err.message);
     });
-}
-
-function initEditPage() {
-  // Placeholder for edit page initialization
 }
 
 function formatError(err) {
