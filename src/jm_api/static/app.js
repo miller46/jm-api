@@ -1,17 +1,28 @@
 const TABLES = ["bots"];
 
+// Sort state — no sort applied on initial load
+var currentSortColumn = null;
+var currentSortDirection = null;
+var currentHeaders = [];
+var currentItems = [];
+var currentTable = "";
+var hiddenColumns = {};
+
 document.addEventListener("DOMContentLoaded", function () {
   // Detect which page we're on
   if (document.getElementById("data-table")) {
     initTablePage();
   } else if (document.getElementById("create-form")) {
     initCreatePage();
+  } else if (document.getElementById("edit-form")) {
+    initEditPage();
   }
 });
 
 function initTablePage() {
   const params = new URLSearchParams(location.search);
   const table = params.get("table");
+  currentTable = table || "";
 
   if (!table) {
     showError("No table specified in URL.");
@@ -48,6 +59,9 @@ function initTablePage() {
       }
 
       var headers = Object.keys(items[0]);
+      currentHeaders = headers;
+      currentItems = items;
+      renderColumnToggles(headers);
       renderTable(headers, items);
     })
     .catch(function (err) {
@@ -60,25 +74,107 @@ function renderTable(headers, items) {
   var thead = document.getElementById("table-head");
   var tbody = document.getElementById("table-body");
 
-  // Build header row
+  // Build header row with sort indicators
   var headerRow = "<tr>";
   for (var i = 0; i < headers.length; i++) {
-    headerRow += "<th>" + headers[i] + "</th>";
+    var hiddenClass = hiddenColumns[headers[i]] ? " col-hidden" : "";
+    var sortIndicator = "";
+    if (currentSortColumn === headers[i]) {
+      sortIndicator = currentSortDirection === "asc" ? " \u25B2" : " \u25BC";
+    }
+    headerRow += '<th class="sortable-header' + hiddenClass + '" data-col-index="' + i + '">' + headers[i] + sortIndicator + "</th>";
   }
   headerRow += "</tr>";
   thead.innerHTML = headerRow;
 
-  // Build body rows
+  // Attach click handlers to <th> for sorting
+  var thElements = thead.querySelectorAll("th");
+  for (var t = 0; t < thElements.length; t++) {
+    thElements[t].addEventListener("click", function () {
+      var colIndex = parseInt(this.getAttribute("data-col-index"), 10);
+      sortByColumn(headers[colIndex]);
+    });
+  }
+
+  // Build body rows with row-level click navigation
   var bodyHtml = "";
   for (var r = 0; r < items.length; r++) {
-    bodyHtml += "<tr>";
+    var rowId = items[r].id !== null && items[r].id !== undefined ? items[r].id : "";
+    bodyHtml += '<tr data-row-id="' + rowId + '">';
     for (var c = 0; c < headers.length; c++) {
+      var hiddenClass = hiddenColumns[headers[c]] ? " col-hidden" : "";
       var val = items[r][headers[c]];
-      bodyHtml += "<td>" + (val !== null && val !== undefined ? val : "") + "</td>";
+      bodyHtml += '<td class="' + hiddenClass.trim() + '">' + (val !== null && val !== undefined ? val : "") + "</td>";
     }
     bodyHtml += "</tr>";
   }
   tbody.innerHTML = bodyHtml;
+
+  // Attach row click handlers for navigation to edit page
+  var rows = tbody.querySelectorAll("tr");
+  for (var rr = 0; rr < rows.length; rr++) {
+    rows[rr].addEventListener("click", function () {
+      var rowId = this.getAttribute("data-row-id");
+      if (currentTable && rowId !== "") {
+        location.href = "edit.html?table=" + encodeURIComponent(currentTable) + "&id=" + encodeURIComponent(rowId);
+      }
+    });
+  }
+}
+
+function sortByColumn(column) {
+  if (currentSortColumn === column) {
+    // Toggle direction
+    currentSortDirection = currentSortDirection === "asc" ? "desc" : "asc";
+  } else {
+    currentSortColumn = column;
+    currentSortDirection = "asc";
+  }
+
+  currentItems.sort(function (a, b) {
+    var valA = a[column] !== null && a[column] !== undefined ? a[column] : "";
+    var valB = b[column] !== null && b[column] !== undefined ? b[column] : "";
+
+    if (typeof valA === "string") valA = valA.toLowerCase();
+    if (typeof valB === "string") valB = valB.toLowerCase();
+
+    if (valA < valB) return currentSortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return currentSortDirection === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  renderTable(currentHeaders, currentItems);
+}
+
+function renderColumnToggles(headers) {
+  var container = document.getElementById("column-checkboxes");
+  if (!container) return;
+
+  container.innerHTML = "";
+  for (var i = 0; i < headers.length; i++) {
+    var label = document.createElement("label");
+    label.style.marginRight = "1rem";
+    var checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.setAttribute("data-column", headers[i]);
+    checkbox.addEventListener("change", function () {
+      var col = this.getAttribute("data-column");
+      toggleColumnVisibility(col, this.checked);
+    });
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(" " + headers[i]));
+    container.appendChild(label);
+  }
+}
+
+function toggleColumnVisibility(column, visible) {
+  if (visible) {
+    delete hiddenColumns[column];
+  } else {
+    hiddenColumns[column] = true;
+  }
+  renderTable(currentHeaders, currentItems);
 }
 
 function showError(message) {
@@ -230,6 +326,10 @@ function submitCreateForm(table, fields) {
     .catch(function (err) {
       showError(err.message);
     });
+}
+
+function initEditPage() {
+  // Placeholder for edit page initialization
 }
 
 function formatError(err) {

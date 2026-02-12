@@ -67,11 +67,20 @@ th, td {
 th {
   background: #e9ecef;
   font-weight: 600;
+  cursor: pointer;
+}
+
+.col-hidden {
+  display: none;
 }
 
 /* Alternating row backgrounds */
 tbody tr:nth-child(even) {
   background: #f8f9fa;
+}
+
+tbody tr {
+  cursor: pointer;
 }
 
 tbody tr:hover {
