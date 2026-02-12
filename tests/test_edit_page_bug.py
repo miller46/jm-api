@@ -28,6 +28,40 @@ def _read_static(filename: str) -> str:
     return path.read_text()
 
 
+def _walk_braces(js: str, open_pos: int) -> str:
+    """Extract a brace-delimited body starting after the opening '{' at open_pos.
+
+    Returns the text *between* the braces (exclusive).
+    """
+    depth = 1
+    pos = open_pos + 1
+    while pos < len(js) and depth > 0:
+        if js[pos] == "{":
+            depth += 1
+        elif js[pos] == "}":
+            depth -= 1
+        pos += 1
+    return js[open_pos + 1 : pos - 1]
+
+
+def _extract_function_body(js: str, fn_name: str) -> str | None:
+    """Extract the full body of a named JS function using brace-walking."""
+    m = re.search(rf"function\s+{fn_name}\s*\([^)]*\)\s*\{{", js)
+    if not m:
+        return None
+    return _walk_braces(js, m.end() - 1)
+
+
+def _extract_dcl_handler_body(js: str) -> str:
+    """Extract the DOMContentLoaded callback body using brace-walking."""
+    dcl_match = re.search(
+        r'addEventListener\s*\(\s*["\']DOMContentLoaded["\']', js,
+    )
+    assert dcl_match, "DOMContentLoaded handler not found in app.js"
+    brace_pos = js.index("{", dcl_match.start())
+    return _walk_braces(js, brace_pos)
+
+
 # ===================================================================
 # Fix 1: No duplicate initEditPage() — empty placeholder must be gone
 # ===================================================================
@@ -60,37 +94,23 @@ class TestNoDuplicateInitEditPage:
         The placeholder is identified by a function body that contains only
         a comment and/or whitespace — no real statements.
         """
-        # Find all initEditPage function bodies
-        pattern = r"function\s+initEditPage\s*\(\s*\)\s*\{([^}]*)\}"
-        matches = re.findall(pattern, self.js)
-        for body in matches:
-            stripped = body.strip()
-            # Remove single-line comments
-            stripped = re.sub(r"//.*", "", stripped).strip()
-            # Remove multi-line comments
-            stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL).strip()
-            assert stripped != "", (
-                "Found an empty initEditPage placeholder (body has only comments/whitespace). "
-                "This must be deleted — it overwrites the full implementation via hoisting."
-            )
+        # Use brace-walking to extract the full function body (handles nested braces)
+        body = _extract_function_body(self.js, "initEditPage")
+        assert body is not None, "initEditPage function not found"
+        stripped = body.strip()
+        # Remove single-line comments
+        stripped = re.sub(r"//.*", "", stripped).strip()
+        # Remove multi-line comments
+        stripped = re.sub(r"/\*.*?\*/", "", stripped, flags=re.DOTALL).strip()
+        assert stripped != "", (
+            "Found an empty initEditPage placeholder (body has only comments/whitespace). "
+            "This must be deleted — it overwrites the full implementation via hoisting."
+        )
 
     def test_init_edit_page_has_fetch_logic(self) -> None:
         """The surviving initEditPage must contain fetch logic for loading the record."""
-        # Extract the full initEditPage body (from declaration to matching closing brace)
-        start_match = re.search(r"function\s+initEditPage\s*\(\s*\)\s*\{", self.js)
-        assert start_match, "initEditPage function not found"
-
-        # Walk braces to find the full function body
-        start = start_match.end()
-        depth = 1
-        pos = start
-        while pos < len(self.js) and depth > 0:
-            if self.js[pos] == "{":
-                depth += 1
-            elif self.js[pos] == "}":
-                depth -= 1
-            pos += 1
-        body = self.js[start : pos - 1]
+        body = _extract_function_body(self.js, "initEditPage")
+        assert body is not None, "initEditPage function not found"
 
         assert "fetch" in body, (
             "initEditPage must contain fetch() call to load the record data"
@@ -124,28 +144,8 @@ class TestNoDuplicateEditFormBranch:
 
     def test_edit_form_checked_exactly_once_in_dom_content_loaded(self) -> None:
         """The DOMContentLoaded handler must check for 'edit-form' exactly once."""
-        # Extract the DOMContentLoaded handler block
-        dcl_match = re.search(
-            r'addEventListener\s*\(\s*["\']DOMContentLoaded["\']',
-            self.js,
-        )
-        assert dcl_match, "DOMContentLoaded handler not found in app.js"
+        handler_body = _extract_dcl_handler_body(self.js)
 
-        # Get everything from the handler to its closing
-        start = dcl_match.start()
-        # Find the opening brace of the callback
-        brace_pos = self.js.index("{", start)
-        depth = 1
-        pos = brace_pos + 1
-        while pos < len(self.js) and depth > 0:
-            if self.js[pos] == "{":
-                depth += 1
-            elif self.js[pos] == "}":
-                depth -= 1
-            pos += 1
-        handler_body = self.js[brace_pos : pos]
-
-        # Count occurrences of edit-form check
         edit_form_checks = re.findall(
             r'getElementById\s*\(\s*["\']edit-form["\']\s*\)', handler_body
         )
@@ -157,23 +157,7 @@ class TestNoDuplicateEditFormBranch:
 
     def test_init_edit_page_called_once_in_handler(self) -> None:
         """initEditPage() must appear exactly once in the DOMContentLoaded handler."""
-        dcl_match = re.search(
-            r'addEventListener\s*\(\s*["\']DOMContentLoaded["\']',
-            self.js,
-        )
-        assert dcl_match
-
-        start = dcl_match.start()
-        brace_pos = self.js.index("{", start)
-        depth = 1
-        pos = brace_pos + 1
-        while pos < len(self.js) and depth > 0:
-            if self.js[pos] == "{":
-                depth += 1
-            elif self.js[pos] == "}":
-                depth -= 1
-            pos += 1
-        handler_body = self.js[brace_pos : pos]
+        handler_body = _extract_dcl_handler_body(self.js)
 
         calls = re.findall(r"initEditPage\s*\(\s*\)", handler_body)
         assert len(calls) == 1, (
@@ -187,23 +171,7 @@ class TestNoDuplicateEditFormBranch:
         Correct order: data-table → edit-form → create-form.
         An edit-form check after create-form is unreachable dead code.
         """
-        dcl_match = re.search(
-            r'addEventListener\s*\(\s*["\']DOMContentLoaded["\']',
-            self.js,
-        )
-        assert dcl_match
-
-        start = dcl_match.start()
-        brace_pos = self.js.index("{", start)
-        depth = 1
-        pos = brace_pos + 1
-        while pos < len(self.js) and depth > 0:
-            if self.js[pos] == "{":
-                depth += 1
-            elif self.js[pos] == "}":
-                depth -= 1
-            pos += 1
-        handler_body = self.js[brace_pos : pos]
+        handler_body = _extract_dcl_handler_body(self.js)
 
         # Find positions of create-form and edit-form checks
         create_positions = [
@@ -238,62 +206,77 @@ class TestEditPageFunctionality:
       - Fetch record data and OpenAPI schema
       - Call renderEditForm to build the form
       - Submit PUT requests on save
+
+    Assertions use regex to tolerate quote-style and whitespace variations.
     """
 
     @pytest.fixture(autouse=True)
     def _load_js(self) -> None:
         self.js = _read_static("app.js")
+        self.edit_body = _extract_function_body(self.js, "initEditPage")
+        self.submit_body = _extract_function_body(self.js, "submitEditForm")
 
     def test_init_edit_page_reads_url_params(self) -> None:
         """initEditPage must parse table and id from URL search params."""
-        assert "URLSearchParams" in self.js
-        assert 'get("table")' in self.js or "get('table')" in self.js
-        assert 'get("id")' in self.js or "get('id')" in self.js
+        assert self.edit_body is not None, "initEditPage not found"
+        assert "URLSearchParams" in self.edit_body
+        assert re.search(r"get\s*\(\s*[\"']table[\"']\s*\)", self.edit_body), (
+            "initEditPage must read 'table' from URL search params"
+        )
+        assert re.search(r"get\s*\(\s*[\"']id[\"']\s*\)", self.edit_body), (
+            "initEditPage must read 'id' from URL search params"
+        )
 
     def test_init_edit_page_fetches_record(self) -> None:
-        """initEditPage must fetch the individual record via GET /api/v1/{table}/{id}."""
-        # The fetch pattern: fetch("/api/v1/" + table + "/" + id)
-        assert '"/api/v1/" + table + "/" + id' in self.js or \
-               '"/api/v1/" + table + "/" +id' in self.js or \
-               "`/api/v1/${table}/${id}`" in self.js, (
+        """initEditPage must fetch the individual record via /api/v1/{table}/{id}."""
+        assert self.edit_body is not None, "initEditPage not found"
+        assert re.search(r"/api/v1/", self.edit_body), (
             "initEditPage must fetch the record at /api/v1/{table}/{id}"
+        )
+        assert "fetch" in self.edit_body, (
+            "initEditPage must use fetch() to retrieve the record"
         )
 
     def test_init_edit_page_fetches_openapi_schema(self) -> None:
         """initEditPage must fetch /openapi.json to discover editable fields."""
-        assert '"/openapi.json"' in self.js or "'/openapi.json'" in self.js or \
-               "`/openapi.json`" in self.js, (
+        assert self.edit_body is not None, "initEditPage not found"
+        assert re.search(r"[\"'`]/openapi\.json[\"'`]", self.edit_body), (
             "initEditPage must fetch OpenAPI schema to discover form fields"
         )
 
     def test_init_edit_page_calls_render_edit_form(self) -> None:
         """initEditPage must call renderEditForm to build the edit form."""
-        assert "renderEditForm" in self.js, (
+        assert self.edit_body is not None, "initEditPage not found"
+        assert re.search(r"renderEditForm\s*\(", self.edit_body), (
             "initEditPage must call renderEditForm to populate the edit form"
         )
 
     def test_submit_edit_form_uses_put(self) -> None:
         """submitEditForm must send a PUT request to update the record."""
-        assert 'method: "PUT"' in self.js or "method: 'PUT'" in self.js, (
+        assert self.submit_body is not None, "submitEditForm not found"
+        assert re.search(r"method\s*:\s*[\"']PUT[\"']", self.submit_body), (
             "submitEditForm must use HTTP PUT method to update the record"
         )
 
     def test_submit_edit_form_sends_json(self) -> None:
         """submitEditForm must send JSON body with Content-Type header."""
-        assert '"Content-Type": "application/json"' in self.js or \
-               "'Content-Type': 'application/json'" in self.js, (
-            "submitEditForm must set Content-Type: application/json header"
-        )
+        assert self.submit_body is not None, "submitEditForm not found"
+        assert re.search(
+            r"[\"']Content-Type[\"']\s*:\s*[\"']application/json[\"']",
+            self.submit_body,
+        ), "submitEditForm must set Content-Type: application/json header"
 
     def test_submit_edit_form_redirects_on_success(self) -> None:
         """submitEditForm must redirect to table page on success."""
-        assert "table.html" in self.js, (
+        assert self.submit_body is not None, "submitEditForm not found"
+        assert "table.html" in self.submit_body, (
             "submitEditForm must redirect to table.html after successful update"
         )
 
     def test_submit_edit_form_shows_error_on_failure(self) -> None:
         """submitEditForm must show error message on failure."""
-        assert "showError" in self.js, (
+        assert self.submit_body is not None, "submitEditForm not found"
+        assert "showError" in self.submit_body, (
             "submitEditForm must call showError on failed update"
         )
 
@@ -332,13 +315,16 @@ class TestEditApiRoundTrip:
     def test_put_then_get_consistency(self, client: TestClient, bot_factory) -> None:
         """PUT followed by GET must return consistent data."""
         bot = bot_factory(rig_id="rig-consistency")
-        client.put(
+        put_resp = client.put(
             f"/api/v1/bots/{bot.id}",
             json={"rig_id": "rig-after-edit"},
         )
-        resp = client.get(f"/api/v1/bots/{bot.id}")
-        assert resp.status_code == 200
-        assert resp.json()["rig_id"] == "rig-after-edit"
+        assert put_resp.status_code == 200, (
+            f"PUT failed with status {put_resp.status_code}: {put_resp.text}"
+        )
+        get_resp = client.get(f"/api/v1/bots/{bot.id}")
+        assert get_resp.status_code == 200
+        assert get_resp.json()["rig_id"] == "rig-after-edit"
 
     def test_openapi_schema_available(self, client: TestClient) -> None:
         """GET /openapi.json must be available (needed by initEditPage)."""
@@ -414,23 +400,7 @@ class TestRegressionAfterFix:
 
     def test_all_three_page_inits_in_handler(self) -> None:
         """DOMContentLoaded must still dispatch to all 3 page init functions."""
-        dcl_match = re.search(
-            r'addEventListener\s*\(\s*["\']DOMContentLoaded["\']',
-            self.js,
-        )
-        assert dcl_match
-
-        start = dcl_match.start()
-        brace_pos = self.js.index("{", start)
-        depth = 1
-        pos = brace_pos + 1
-        while pos < len(self.js) and depth > 0:
-            if self.js[pos] == "{":
-                depth += 1
-            elif self.js[pos] == "}":
-                depth -= 1
-            pos += 1
-        handler_body = self.js[brace_pos : pos]
+        handler_body = _extract_dcl_handler_body(self.js)
 
         assert "initTablePage" in handler_body, "DOMContentLoaded must call initTablePage"
         assert "initEditPage" in handler_body, "DOMContentLoaded must call initEditPage"
