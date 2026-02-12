@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from starlette.status import HTTP_201_CREATED, HTTP_409_CONFLICT
+from starlette.status import HTTP_201_CREATED, HTTP_204_NO_CONTENT, HTTP_409_CONFLICT
 
 from jm_api.db.session import get_db
 from jm_api.schemas.generic import ListResponse, NotFoundError
@@ -231,6 +231,56 @@ def create_update_router(
         response_model=response_schema,
         responses={404: {"model": NotFoundError}},
         name=f"update_{name_lower}",
+    )
+
+    return router
+
+
+def create_delete_router(
+    *,
+    prefix: str,
+    tags: list[str],
+    model: type,
+    resource_name: str,
+    id_pattern: str = r"^[a-zA-Z0-9]{32}$",
+) -> APIRouter:
+    """Create an APIRouter with a DELETE endpoint for removing records.
+
+    Args:
+        prefix: URL prefix (e.g. "/bots").
+        tags: OpenAPI tags.
+        model: SQLAlchemy model class.
+        resource_name: Human-readable name for 404 messages.
+        id_pattern: Regex pattern for path ID validation.
+
+    Returns:
+        Configured APIRouter with DELETE "/{item_id}" route.
+    """
+    router = APIRouter(prefix=prefix, tags=tags)
+    name_lower = resource_name.lower()
+
+    def delete_item(item_id, *, db: Session = Depends(get_db)) -> None:
+        item = db.get(model, item_id)
+        if item is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": f"{resource_name} not found", "id": item_id},
+            )
+        db.delete(item)
+        db.commit()
+
+    delete_item.__annotations__["item_id"] = Annotated[
+        str, Path(pattern=id_pattern)
+    ]
+    delete_item.__name__ = f"delete_{name_lower}"
+
+    router.add_api_route(
+        "/{item_id}",
+        delete_item,
+        methods=["DELETE"],
+        status_code=HTTP_204_NO_CONTENT,
+        responses={404: {"model": NotFoundError}},
+        name=f"delete_{name_lower}",
     )
 
     return router

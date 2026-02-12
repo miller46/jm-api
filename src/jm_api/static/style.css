@@ -118,6 +118,18 @@ tbody tr:hover {
   border-color: #0a58ca;
 }
 
+.btn-danger {
+  color: #fff;
+  background: #dc3545;
+  border-color: #dc3545;
+  margin-left: 0.5rem;
+}
+
+.btn-danger:hover {
+  background: #bb2d3b;
+  border-color: #b02a37;
+}
+
 /* Form layout */
 .form-group {
   margin-bottom: 1rem;
