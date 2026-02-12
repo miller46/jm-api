@@ -9,8 +9,7 @@ var TableState = {
   items: [],
   table: "",
   hiddenColumns: {},
-  filterFields: [],
-  activeFilters: {}
+  filterFields: []
 };
 
 /**
