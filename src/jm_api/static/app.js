@@ -1,17 +1,45 @@
 const TABLES = ["bots"];
 
+// Encapsulated table page state — avoids fragile module-level mutable globals
+var TableState = {
+  sortColumn: null,
+  sortDirection: null,
+  headers: [],
+  originalItems: [],
+  items: [],
+  table: "",
+  hiddenColumns: {}
+};
+
+/**
+ * Escape HTML special characters to prevent XSS when interpolating
+ * user-controlled or API-sourced data into innerHTML strings.
+ */
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 document.addEventListener("DOMContentLoaded", function () {
   // Detect which page we're on
   if (document.getElementById("data-table")) {
     initTablePage();
   } else if (document.getElementById("create-form")) {
     initCreatePage();
+  } else if (document.getElementById("edit-form")) {
+    initEditPage();
   }
 });
 
 function initTablePage() {
   const params = new URLSearchParams(location.search);
   const table = params.get("table");
+  TableState.table = table || "";
 
   if (!table) {
     showError("No table specified in URL.");
@@ -48,7 +76,11 @@ function initTablePage() {
       }
 
       var headers = Object.keys(items[0]);
-      renderTable(headers, items);
+      TableState.headers = headers;
+      TableState.originalItems = items.slice();
+      TableState.items = items.slice();
+      renderColumnToggles(headers);
+      renderTable(headers, TableState.items);
     })
     .catch(function (err) {
       if (loadingEl) loadingEl.style.display = "none";
@@ -60,25 +92,111 @@ function renderTable(headers, items) {
   var thead = document.getElementById("table-head");
   var tbody = document.getElementById("table-body");
 
-  // Build header row
+  // Build header row with sort indicators
   var headerRow = "<tr>";
   for (var i = 0; i < headers.length; i++) {
-    headerRow += "<th>" + headers[i] + "</th>";
+    var hiddenClass = TableState.hiddenColumns[headers[i]] ? " col-hidden" : "";
+    var sortIndicator = "";
+    if (TableState.sortColumn === headers[i]) {
+      sortIndicator = TableState.sortDirection === "asc" ? " \u25B2" : " \u25BC";
+    }
+    headerRow += '<th class="sortable-header' + hiddenClass + '" data-col-index="' + i + '">' + escapeHtml(headers[i]) + sortIndicator + "</th>";
   }
   headerRow += "</tr>";
   thead.innerHTML = headerRow;
 
-  // Build body rows
+  // Attach click handlers to <th> for sorting
+  var thElements = thead.querySelectorAll("th");
+  for (var t = 0; t < thElements.length; t++) {
+    thElements[t].addEventListener("click", function () {
+      var colIndex = parseInt(this.getAttribute("data-col-index"), 10);
+      sortByColumn(headers[colIndex]);
+    });
+  }
+
+  // Build body rows with row-level click navigation
   var bodyHtml = "";
   for (var r = 0; r < items.length; r++) {
-    bodyHtml += "<tr>";
+    var rowId = items[r].id !== null && items[r].id !== undefined ? items[r].id : "";
+    bodyHtml += '<tr data-row-id="' + escapeHtml(rowId) + '">';
     for (var c = 0; c < headers.length; c++) {
+      var hiddenClass = TableState.hiddenColumns[headers[c]] ? " col-hidden" : "";
       var val = items[r][headers[c]];
-      bodyHtml += "<td>" + (val !== null && val !== undefined ? val : "") + "</td>";
+      bodyHtml += '<td class="' + hiddenClass.trim() + '">' + escapeHtml(val) + "</td>";
     }
     bodyHtml += "</tr>";
   }
   tbody.innerHTML = bodyHtml;
+
+  // Attach row click handlers — guarded: edit.html does not exist yet,
+  // so log intent to console instead of navigating to a 404
+  var rows = tbody.querySelectorAll("tr");
+  for (var rr = 0; rr < rows.length; rr++) {
+    rows[rr].addEventListener("click", function () {
+      var rowId = this.getAttribute("data-row-id");
+      if (TableState.table && rowId !== "") {
+        // TODO: navigate to edit.html once it exists
+        console.log("Row clicked: table=" + TableState.table + ", id=" + rowId);
+      }
+    });
+  }
+}
+
+function sortByColumn(column) {
+  if (TableState.sortColumn === column) {
+    // Toggle direction
+    TableState.sortDirection = TableState.sortDirection === "asc" ? "desc" : "asc";
+  } else {
+    TableState.sortColumn = column;
+    TableState.sortDirection = "asc";
+  }
+
+  // Sort a shallow copy — never mutate originalItems
+  var sorted = TableState.originalItems.slice().sort(function (a, b) {
+    var valA = a[column] !== null && a[column] !== undefined ? a[column] : "";
+    var valB = b[column] !== null && b[column] !== undefined ? b[column] : "";
+
+    if (typeof valA === "string") valA = valA.toLowerCase();
+    if (typeof valB === "string") valB = valB.toLowerCase();
+
+    if (valA < valB) return TableState.sortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return TableState.sortDirection === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  TableState.items = sorted;
+  renderTable(TableState.headers, sorted);
+}
+
+function renderColumnToggles(headers) {
+  var container = document.getElementById("column-checkboxes");
+  if (!container) return;
+
+  container.innerHTML = "";
+  for (var i = 0; i < headers.length; i++) {
+    var label = document.createElement("label");
+    label.style.marginRight = "1rem";
+    var checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = true;
+    checkbox.setAttribute("data-column", headers[i]);
+    checkbox.addEventListener("change", function () {
+      var col = this.getAttribute("data-column");
+      toggleColumnVisibility(col, this.checked);
+    });
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(" " + headers[i]));
+    container.appendChild(label);
+  }
+}
+
+function toggleColumnVisibility(column, visible) {
+  if (visible) {
+    delete TableState.hiddenColumns[column];
+  } else {
+    TableState.hiddenColumns[column] = true;
+  }
+  renderTable(TableState.headers, TableState.items);
 }
 
 function showError(message) {
@@ -230,6 +348,10 @@ function submitCreateForm(table, fields) {
     .catch(function (err) {
       showError(err.message);
     });
+}
+
+function initEditPage() {
+  // Placeholder for edit page initialization
 }
 
 function formatError(err) {
