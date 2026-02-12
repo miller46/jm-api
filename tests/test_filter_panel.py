@@ -17,6 +17,7 @@ Plus acceptance criteria:
 
 import pathlib
 import re
+from html.parser import HTMLParser
 
 import pytest
 
@@ -28,6 +29,40 @@ def _read_static(filename: str) -> str:
     path = STATIC_DIR / filename
     assert path.exists(), f"Expected static file not found: {path}"
     return path.read_text()
+
+
+# ---------------------------------------------------------------------------
+# JS parsing helpers — extract function bodies for structural assertions
+# ---------------------------------------------------------------------------
+
+
+def _extract_js_function_body(js: str, name: str) -> str | None:
+    """Extract the full body of a named JS function using brace-counting.
+
+    Handles ``function name(...) { ... }`` declarations.
+    Returns the body (including braces) or None if not found.
+    """
+    pattern = rf"function\s+{re.escape(name)}\s*\([^)]*\)\s*\{{"
+    match = re.search(pattern, js)
+    if not match:
+        return None
+    start = match.start()
+    depth = 0
+    i = match.end() - 1  # position of the opening brace
+    while i < len(js):
+        if js[i] == "{":
+            depth += 1
+        elif js[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return js[start : i + 1]
+        i += 1
+    return None
+
+
+def _js_function_names(js: str) -> list[str]:
+    """Return all top-level ``function xyz(`` names found in *js*."""
+    return re.findall(r"^function\s+(\w+)\s*\(", js, flags=re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
@@ -57,129 +92,112 @@ def _css_has_property(body: str, prop: str, value: str) -> bool:
     return bool(re.search(pattern, body))
 
 
+# ---------------------------------------------------------------------------
+# HTML parser helper — collect element info from HTML
+# ---------------------------------------------------------------------------
+
+
+class _TagCollector(HTMLParser):
+    """Collects (tag, attrs-dict) tuples in document order."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tags: list[tuple[str, dict[str, str | None]]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.tags.append((tag, dict(attrs)))
+
+
+def _parse_html_tags(html: str) -> list[tuple[str, dict[str, str | None]]]:
+    collector = _TagCollector()
+    collector.feed(html)
+    return collector.tags
+
+
 # ===================================================================
 # Sub-task 1: Discover filterable fields from OpenAPI spec
 # ===================================================================
 
 
 class TestDiscoverFilterableFields:
-    """app.js must fetch /openapi.json and extract GET query parameters."""
+    """app.js must have a discoverFilterFields function that processes the OpenAPI spec."""
 
     @pytest.fixture(autouse=True)
     def _load_js(self) -> None:
         self.js = _read_static("app.js")
-        self.js_lower = self.js.lower()
+        self.fn_body = _extract_js_function_body(self.js, "discoverFilterFields")
 
-    def test_fetches_openapi_json(self) -> None:
-        """app.js must fetch /openapi.json to discover filterable fields.
-
-        Spec: 'add a function that fetches /openapi.json and extracts
-        query parameters from the GET /api/v1/{table} endpoint.'
-        """
-        assert "/openapi.json" in self.js, (
-            "Expected fetch('/openapi.json') call in app.js to discover filter fields"
+    def test_discover_filter_fields_function_defined(self) -> None:
+        """A function named discoverFilterFields must be defined in app.js."""
+        assert self.fn_body is not None, (
+            "Expected function discoverFilterFields(...) { ... } in app.js"
         )
 
-    def test_reads_get_endpoint_parameters(self) -> None:
-        """Must extract query parameters from the GET endpoint.
-
-        Spec: 'extracts query parameters from the GET /api/v1/{table} endpoint.'
-        The code should look for path objects and GET parameters in the spec.
-        """
-        has_get_or_parameters = any(
-            token in self.js
-            for token in [
-                "parameters",
-                ".get",
-                "get",
-                "query",
-            ]
-        )
-        assert has_get_or_parameters, (
-            "Expected code that reads GET endpoint parameters from OpenAPI spec"
+    def test_constructs_api_path_key(self) -> None:
+        """discoverFilterFields must build the /api/v1/{table} path key to look up
+        the correct endpoint in the spec's paths object."""
+        assert self.fn_body is not None
+        assert '"/api/v1/"' in self.fn_body, (
+            "discoverFilterFields must build path key using '/api/v1/' + table"
         )
 
-    def test_excludes_pagination_params(self) -> None:
-        """Must exclude pagination params (page, per_page) from filter fields.
-
-        Spec: 'Exclude pagination params (page, per_page).'
-        """
-        has_exclusion = any(
-            token in self.js
-            for token in [
-                "page",
-                "per_page",
-                "pagination",
-                "skip",
-                "exclude",
-                "filter",
-            ]
+    def test_reads_get_parameters(self) -> None:
+        """Must read .get.parameters from the spec path object."""
+        assert self.fn_body is not None
+        assert ".get" in self.fn_body, (
+            "discoverFilterFields must access .get on the path object"
         )
-        assert has_exclusion, (
-            "Expected pagination param exclusion logic (page, per_page) in filter discovery"
+        assert "parameters" in self.fn_body, (
+            "discoverFilterFields must read 'parameters' from the GET operation"
         )
 
-    def test_groups_date_range_pairs(self) -> None:
-        """Must group _after/_before suffix params into a single filter entry.
-
-        Spec: 'Group DATE_RANGE pairs (_after/_before suffixes) into a single filter entry.'
-        """
-        has_date_grouping = any(
-            token in self.js
-            for token in [
-                "_after",
-                "_before",
-                "after",
-                "before",
-                "date",
-                "range",
-                "datetime",
-            ]
-        )
-        assert has_date_grouping, (
-            "Expected DATE_RANGE pair grouping logic (_after/_before) in app.js"
+    def test_filters_only_query_params(self) -> None:
+        """Must only process params where in === 'query'."""
+        assert self.fn_body is not None
+        assert '"query"' in self.fn_body, (
+            "discoverFilterFields must filter for in === 'query' parameters"
         )
 
-    def test_parses_parameter_types(self) -> None:
-        """Must parse each parameter's type (string, boolean, integer).
-
-        Spec: 'Parse each parameter's name, type (string, boolean, integer), and schema.'
-        """
-        has_type_parsing = any(
-            token in self.js_lower
-            for token in [
-                "type",
-                "boolean",
-                "string",
-                "integer",
-                "schema",
-            ]
-        )
-        assert has_type_parsing, (
-            "Expected parameter type parsing (string, boolean, integer) in app.js"
+    def test_excludes_page_and_per_page(self) -> None:
+        """Must explicitly exclude 'page' and 'per_page' pagination params."""
+        assert self.fn_body is not None
+        assert '"page"' in self.fn_body and '"per_page"' in self.fn_body, (
+            "discoverFilterFields must list 'page' and 'per_page' as excluded params"
         )
 
-    def test_discover_filter_function_exists(self) -> None:
-        """A dedicated function for discovering filter fields should exist.
-
-        Spec: 'add a function that fetches /openapi.json and extracts query parameters.'
-        """
-        has_discover_fn = any(
-            token in self.js
-            for token in [
-                "discoverFilter",
-                "getFilter",
-                "fetchFilter",
-                "loadFilter",
-                "buildFilter",
-                "parseFilter",
-                "extractFilter",
-                "Filter",
-            ]
+    def test_detects_after_suffix_for_date_range(self) -> None:
+        """Must detect _after suffix to group date-range pairs."""
+        assert self.fn_body is not None
+        assert "_after" in self.fn_body, (
+            "discoverFilterFields must detect '_after' suffix for date range grouping"
         )
-        assert has_discover_fn, (
-            "Expected a dedicated function for discovering filter fields "
-            "(e.g. discoverFilterFields, getFilterableParams) in app.js"
+
+    def test_detects_before_suffix_for_date_range(self) -> None:
+        """Must detect _before suffix to group date-range pairs."""
+        assert self.fn_body is not None
+        assert "_before" in self.fn_body, (
+            "discoverFilterFields must detect '_before' suffix for date range grouping"
+        )
+
+    def test_produces_date_range_kind(self) -> None:
+        """Grouped date-range fields must be tagged with kind: 'date_range'."""
+        assert self.fn_body is not None
+        assert '"date_range"' in self.fn_body, (
+            "discoverFilterFields must produce fields with kind: 'date_range'"
+        )
+
+    def test_checks_boolean_type(self) -> None:
+        """Must detect boolean parameter type (including via anyOf for nullable)."""
+        assert self.fn_body is not None
+        assert '"boolean"' in self.fn_body, (
+            "discoverFilterFields must detect boolean type from schema"
+        )
+
+    def test_returns_array_of_fields(self) -> None:
+        """Must return an array (fields) of discovered filter field objects."""
+        assert self.fn_body is not None
+        assert "return fields" in self.fn_body or "return []" in self.fn_body, (
+            "discoverFilterFields must return the fields array"
         )
 
 
@@ -194,183 +212,142 @@ class TestFilterPanelHTML:
     @pytest.fixture(autouse=True)
     def _load_html(self) -> None:
         self.html = _read_static("table.html")
-        self.html_lower = self.html.lower()
+        self.tags = _parse_html_tags(self.html)
 
     def test_filter_details_element_exists(self) -> None:
-        """Filter panel must be a collapsible <details> element.
-
-        Spec: 'add a <details id="filter-toggle"> element beside the existing Columns <details>.'
-        """
-        assert "filter-toggle" in self.html or "filter" in self.html_lower, (
-            "Expected <details id='filter-toggle'> element in table.html"
+        """A <details id='filter-toggle'> element must exist in table.html."""
+        details_ids = [
+            attrs.get("id") for tag, attrs in self.tags if tag == "details"
+        ]
+        assert "filter-toggle" in details_ids, (
+            "Expected <details id='filter-toggle'> in table.html"
         )
 
     def test_filter_details_has_summary(self) -> None:
-        """Filter <details> must have a <summary> element.
-
-        Matching the existing Columns <details> pattern.
-        """
-        # Find all summary elements — at least two should exist (Columns + Filters)
-        summaries = re.findall(
-            r"<summary[^>]*>(.*?)</summary>",
+        """The filter <details> must contain a <summary> with 'Filters' text."""
+        # Find the summary text inside the filter details block
+        summary_match = re.search(
+            r'<details[^>]*id\s*=\s*["\']filter-toggle["\'][^>]*>\s*<summary>(.*?)</summary>',
             self.html,
-            flags=re.IGNORECASE | re.DOTALL,
+            flags=re.DOTALL,
         )
-        # At least the original Columns summary must exist, plus a filter-related one
-        has_filter_summary = any(
-            "filter" in s.lower() for s in summaries
+        assert summary_match is not None, (
+            "Expected <summary> inside <details id='filter-toggle'>"
         )
-        assert has_filter_summary, (
-            "Expected a <summary> element with 'Filter' text inside the filter <details>"
+        assert "filter" in summary_match.group(1).lower(), (
+            "Expected 'Filters' text in the filter panel summary"
         )
 
-    def test_filter_panel_placement(self) -> None:
-        """Filter panel must appear beside the existing Columns <details>.
+    def test_filter_inputs_container_exists(self) -> None:
+        """A <div id='filter-inputs'> container must exist for dynamically rendered inputs."""
+        div_ids = [attrs.get("id") for tag, attrs in self.tags if tag == "div"]
+        assert "filter-inputs" in div_ids, (
+            "Expected <div id='filter-inputs'> inside the filter panel"
+        )
 
-        Spec: 'add a <details id="filter-toggle"> element beside the existing Columns <details>.'
-        Both should be between the 'Add Record' button and the table.
-        """
-        add_btn_pos = self.html_lower.find("add-record-btn")
-        table_pos = self.html_lower.find("<table")
-
-        # Look for filter-related details element
-        filter_pos = self.html_lower.find("filter")
+    def test_filter_panel_between_add_btn_and_table(self) -> None:
+        """Filter panel must appear after add-record-btn and before the <table>."""
+        add_btn_pos = self.html.find("add-record-btn")
+        filter_pos = self.html.find('id="filter-toggle"')
+        table_pos = self.html.find("<table")
 
         assert add_btn_pos != -1, "Expected add-record-btn in table.html"
+        assert filter_pos != -1, "Expected filter-toggle in table.html"
         assert table_pos != -1, "Expected <table> in table.html"
-        assert filter_pos != -1, "Expected filter element in table.html"
-
         assert add_btn_pos < filter_pos < table_pos, (
-            "Filter panel must appear after the 'Add Record' button "
-            "and before the <table> element"
+            "Filter panel must appear after add-record-btn and before <table>"
         )
 
     def test_two_details_elements_exist(self) -> None:
-        """Both Columns and Filters <details> must exist side by side.
-
-        Spec says to match the existing Columns <details> pattern.
-        """
-        details_count = len(re.findall(r"<details", self.html, flags=re.IGNORECASE))
-        assert details_count >= 2, (
-            f"Expected at least 2 <details> elements (Columns + Filters), found {details_count}"
-        )
+        """Both Columns and Filters <details> must exist."""
+        details_ids = [
+            attrs.get("id") for tag, attrs in self.tags if tag == "details"
+        ]
+        assert "column-toggle" in details_ids, "Expected Columns <details>"
+        assert "filter-toggle" in details_ids, "Expected Filters <details>"
 
 
-class TestFilterPanelInputTypes:
-    """app.js must dynamically populate filter inputs by field type."""
+class TestFilterPanelInputRendering:
+    """app.js renderFilterPanel must create type-appropriate inputs."""
 
     @pytest.fixture(autouse=True)
     def _load_js(self) -> None:
         self.js = _read_static("app.js")
-        self.js_lower = self.js.lower()
+        self.fn_body = _extract_js_function_body(self.js, "renderFilterPanel")
 
-    def test_text_input_for_string_fields(self) -> None:
-        """String/ILIKE fields must use text <input>.
-
-        Spec: 'string/ILIKE fields: text <input>.'
-        """
-        has_text_input = any(
-            token in self.js
-            for token in [
-                'type="text"',
-                "type='text'",
-                '"text"',
-                "'text'",
-                "text",
-            ]
-        )
-        assert has_text_input, (
-            "Expected text <input> creation for string/ILIKE filter fields"
+    def test_render_filter_panel_function_defined(self) -> None:
+        """A renderFilterPanel function must be defined."""
+        assert self.fn_body is not None, (
+            "Expected function renderFilterPanel(...) { ... } in app.js"
         )
 
-    def test_select_for_boolean_fields(self) -> None:
-        """Boolean fields must use <select> with Any / true / false options.
-
-        Spec: 'boolean fields: <select> with options: Any / true / false.'
-        """
-        has_select = any(
-            token in self.js
-            for token in [
-                "<select",
-                "createElement(\"select\")",
-                "createElement('select')",
-                "select",
-            ]
-        )
-        assert has_select, (
-            "Expected <select> element creation for boolean filter fields"
+    def test_creates_text_input_for_string_fields(self) -> None:
+        """Must create <input type='text'> for string/ILIKE fields."""
+        assert self.fn_body is not None
+        assert '"text"' in self.fn_body, (
+            "renderFilterPanel must set input.type = 'text' for string fields"
         )
 
-    def test_boolean_select_has_three_options(self) -> None:
-        """Boolean <select> must have Any / true / false options.
-
-        Spec: '<select> with options: Any / true / false.'
-        """
-        has_true = "true" in self.js_lower
-        has_false = "false" in self.js_lower
-        has_any_or_all = any(
-            token in self.js_lower for token in ["any", "all", '""', "''"]
-        )
-        assert has_true and has_false, (
-            "Expected 'true' and 'false' options in boolean filter <select>"
-        )
-        assert has_any_or_all, (
-            "Expected 'Any'/'All' or empty-value option in boolean filter <select>"
+    def test_creates_select_for_boolean_fields(self) -> None:
+        """Must create <select> element for boolean fields."""
+        assert self.fn_body is not None
+        assert 'createElement("select")' in self.fn_body, (
+            "renderFilterPanel must createElement('select') for boolean fields"
         )
 
-    def test_datetime_local_for_date_range_fields(self) -> None:
-        """DATE_RANGE fields must use <input type='datetime-local'>.
+    def test_boolean_select_has_any_true_false_options(self) -> None:
+        """Boolean <select> must have three options: 'Any' (empty), 'true', 'false'."""
+        assert self.fn_body is not None
+        assert '"Any"' in self.fn_body, "Expected 'Any' option in boolean select"
+        assert '"true"' in self.fn_body, "Expected 'true' option in boolean select"
+        assert '"false"' in self.fn_body, "Expected 'false' option in boolean select"
 
-        Spec: 'DATE_RANGE fields: two <input type="datetime-local"> (After / Before).'
-        """
-        has_datetime_local = any(
-            token in self.js
-            for token in [
-                "datetime-local",
-                "datetime",
-                "date",
-            ]
-        )
-        assert has_datetime_local, (
-            "Expected <input type='datetime-local'> for DATE_RANGE filter fields"
+    def test_creates_datetime_local_for_date_range(self) -> None:
+        """Must create <input type='datetime-local'> for date range fields."""
+        assert self.fn_body is not None
+        assert '"datetime-local"' in self.fn_body, (
+            "renderFilterPanel must set input.type = 'datetime-local' for date ranges"
         )
 
     def test_date_range_has_after_and_before_labels(self) -> None:
-        """DATE_RANGE inputs must have After / Before labels or placeholders.
+        """DATE_RANGE inputs must have 'After' and 'Before' labels."""
+        assert self.fn_body is not None
+        assert '"After"' in self.fn_body, "Expected 'After' label for date range"
+        assert '"Before"' in self.fn_body, "Expected 'Before' label for date range"
 
-        Spec: 'two <input type="datetime-local"> (After / Before).'
-        """
-        has_after = any(
-            token in self.js_lower
-            for token in ["after", "_after", "from", "start"]
-        )
-        has_before = any(
-            token in self.js_lower
-            for token in ["before", "_before", "to", "end"]
-        )
-        assert has_after and has_before, (
-            "Expected 'After' and 'Before' labels/identifiers for DATE_RANGE filter inputs"
+    def test_sets_data_filter_attribute(self) -> None:
+        """Each input must have a data-filter attribute for param name identification."""
+        assert self.fn_body is not None
+        assert "data-filter" in self.fn_body, (
+            "renderFilterPanel must set data-filter attribute on inputs"
         )
 
-    def test_apply_filters_button_exists(self) -> None:
-        """An 'Apply Filters' button must be rendered at the bottom.
-
-        Spec: 'Add an "Apply Filters" <button> at the bottom.'
-        """
-        has_apply = any(
-            token in self.js
-            for token in [
-                "Apply",
-                "apply",
-                "Filter",
-                "filter",
-                "submit",
-                "Search",
-                "search",
-            ]
+    def test_creates_apply_filters_button(self) -> None:
+        """An 'Apply Filters' button must be created."""
+        assert self.fn_body is not None
+        assert '"Apply Filters"' in self.fn_body, (
+            "renderFilterPanel must create an 'Apply Filters' button"
         )
-        assert has_apply, (
-            "Expected an 'Apply Filters' button in the filter panel"
+
+    def test_creates_clear_button(self) -> None:
+        """A 'Clear' button must be created."""
+        assert self.fn_body is not None
+        assert '"Clear"' in self.fn_body, (
+            "renderFilterPanel must create a 'Clear' button"
+        )
+
+    def test_apply_button_calls_apply_filters(self) -> None:
+        """Apply button click handler must call applyFilters()."""
+        assert self.fn_body is not None
+        assert "applyFilters()" in self.fn_body, (
+            "Apply button must call applyFilters() on click"
+        )
+
+    def test_clear_button_calls_clear_filters(self) -> None:
+        """Clear button click handler must call clearFilters()."""
+        assert self.fn_body is not None
+        assert "clearFilters()" in self.fn_body, (
+            "Clear button must call clearFilters() on click"
         )
 
 
@@ -379,105 +356,189 @@ class TestFilterPanelInputTypes:
 # ===================================================================
 
 
-class TestApplyFiltersAndRefetch:
-    """On 'Apply Filters' click: build query string, fetch, re-render."""
+class TestApplyFilters:
+    """applyFilters must collect inputs, build query params, and delegate to fetchAndRender."""
 
     @pytest.fixture(autouse=True)
     def _load_js(self) -> None:
         self.js = _read_static("app.js")
-        self.js_lower = self.js.lower()
+        self.fn_body = _extract_js_function_body(self.js, "applyFilters")
 
-    def test_builds_query_string_from_inputs(self) -> None:
-        """Must build query string from non-empty filter inputs.
+    def test_apply_filters_function_defined(self) -> None:
+        """applyFilters function must be defined."""
+        assert self.fn_body is not None, (
+            "Expected function applyFilters() { ... } in app.js"
+        )
 
-        Spec: 'Build query string from non-empty filter inputs.'
+    def test_creates_url_search_params(self) -> None:
+        """Must create a URLSearchParams to build query string."""
+        assert self.fn_body is not None
+        assert "URLSearchParams" in self.fn_body, (
+            "applyFilters must use URLSearchParams to build query string"
+        )
+
+    def test_sets_page_to_one(self) -> None:
+        """Must reset pagination to page 1."""
+        assert self.fn_body is not None
+        # Verify it explicitly appends page=1
+        assert re.search(r'append\(\s*"page"\s*,\s*"1"\s*\)', self.fn_body), (
+            "applyFilters must append page=1 to reset pagination"
+        )
+
+    def test_queries_data_filter_elements(self) -> None:
+        """Must query all [data-filter] elements to collect filter values."""
+        assert self.fn_body is not None
+        assert "[data-filter]" in self.fn_body, (
+            "applyFilters must select [data-filter] elements to read filter values"
+        )
+
+    def test_skips_empty_values(self) -> None:
+        """Must check for non-empty values before appending to params."""
+        assert self.fn_body is not None
+        assert '!== ""' in self.fn_body, (
+            "applyFilters must skip empty string values when building query params"
+        )
+
+    def test_delegates_to_fetch_and_render(self) -> None:
+        """Must call fetchAndRender(params) instead of duplicating fetch logic."""
+        assert self.fn_body is not None
+        assert "fetchAndRender(params)" in self.fn_body, (
+            "applyFilters must delegate to fetchAndRender(params) — "
+            "no duplicated fetch/render logic"
+        )
+
+
+class TestFetchAndRender:
+    """fetchAndRender is the shared helper used by both applyFilters and clearFilters."""
+
+    @pytest.fixture(autouse=True)
+    def _load_js(self) -> None:
+        self.js = _read_static("app.js")
+        self.fn_body = _extract_js_function_body(self.js, "fetchAndRender")
+
+    def test_fetch_and_render_function_defined(self) -> None:
+        """fetchAndRender function must be defined to avoid code duplication."""
+        assert self.fn_body is not None, (
+            "Expected function fetchAndRender(params) { ... } in app.js — "
+            "shared helper to eliminate duplication between applyFilters/clearFilters"
+        )
+
+    def test_fetches_api_endpoint(self) -> None:
+        """Must fetch /api/v1/{table} with the given params."""
+        assert self.fn_body is not None
+        assert "fetch(" in self.fn_body, "fetchAndRender must call fetch()"
+        assert "/api/v1/" in self.fn_body, "fetchAndRender must use /api/v1/ endpoint"
+
+    def test_updates_table_state(self) -> None:
+        """Must update TableState.originalItems and TableState.items."""
+        assert self.fn_body is not None
+        assert "TableState.originalItems" in self.fn_body, (
+            "fetchAndRender must update TableState.originalItems"
+        )
+        assert "TableState.items" in self.fn_body, (
+            "fetchAndRender must update TableState.items"
+        )
+
+    def test_calls_reapply_sort_not_sort_by_column(self) -> None:
+        """Must call reapplySort() — NOT sortByColumn() — to avoid toggling sort direction.
+
+        This is the key fix for the sort-direction bug: sortByColumn toggles the
+        direction when called with the same column, which would silently reverse
+        the sort on every filter apply/clear.
         """
-        has_query_building = any(
-            token in self.js
-            for token in [
-                "URLSearchParams",
-                "encodeURIComponent",
-                "query",
-                "param",
-                "?",
-                "&",
-                "append",
-            ]
+        assert self.fn_body is not None
+        assert "reapplySort()" in self.fn_body, (
+            "fetchAndRender must call reapplySort() to preserve sort direction"
         )
-        assert has_query_building, (
-            "Expected query string building logic (URLSearchParams, encodeURIComponent, etc.)"
+        assert "sortByColumn(" not in self.fn_body, (
+            "fetchAndRender must NOT call sortByColumn() — that toggles the sort direction"
         )
 
-    def test_fetches_with_filter_params(self) -> None:
-        """Must fetch GET /api/v1/{table} with filter query params.
-
-        Spec: 'Fetch GET /api/v1/{table}?{filters}&page=1&per_page={current}.'
-        """
-        assert "fetch(" in self.js, (
-            "Expected fetch() call with filter query parameters"
-        )
-        assert "/api/v1/" in self.js, (
-            "Expected /api/v1/ URL in fetch call"
+    def test_calls_render_table(self) -> None:
+        """Must call renderTable to re-render when no sort is active."""
+        assert self.fn_body is not None
+        assert "renderTable(" in self.fn_body, (
+            "fetchAndRender must call renderTable() when no sort column is active"
         )
 
-    def test_resets_to_page_one(self) -> None:
-        """Must reset pagination to page 1 on filter apply.
-
-        Spec: 'Pagination resets to page 1 on filter apply.'
-        Acceptance criteria: 'Pagination resets to page 1 on filter apply.'
-        """
-        has_page_reset = any(
-            token in self.js
-            for token in [
-                "page=1",
-                "page = 1",
-                "currentPage = 1",
-                "page=1",
-            ]
-        )
-        assert has_page_reset, (
-            "Expected pagination reset to page 1 when applying filters"
+    def test_handles_empty_results(self) -> None:
+        """Must handle empty results (items.length === 0) gracefully."""
+        assert self.fn_body is not None
+        assert "items.length === 0" in self.fn_body or "items.length==0" in self.fn_body, (
+            "fetchAndRender must handle empty result sets"
         )
 
-    def test_re_renders_table_after_filter(self) -> None:
-        """Must re-render the table with filtered results.
-
-        Spec: 'Re-render the table with filtered results.'
-        """
-        has_rerender = any(
-            token in self.js
-            for token in [
-                "renderTable",
-                "innerHTML",
-                "render",
-            ]
-        )
-        assert has_rerender, (
-            "Expected table re-render after applying filters"
+    def test_shows_and_hides_loading_indicator(self) -> None:
+        """Must show loading indicator before fetch and hide it after."""
+        assert self.fn_body is not None
+        assert "loading" in self.fn_body, (
+            "fetchAndRender must manage loading indicator visibility"
         )
 
-    def test_skips_empty_filter_values(self) -> None:
-        """Non-empty filter inputs should be the only ones sent.
-
-        Spec: 'Build query string from non-empty filter inputs.'
-        Empty/blank inputs must be skipped.
-        """
-        has_empty_check = any(
-            token in self.js
-            for token in [
-                '!== ""',
-                "!== ''",
-                '.value',
-                'trim',
-                'length',
-                'empty',
-                '!val',
-                'if (',
-                'continue',
-            ]
+    def test_handles_fetch_errors(self) -> None:
+        """Must catch fetch errors and call showError."""
+        assert self.fn_body is not None
+        assert "showError" in self.fn_body, (
+            "fetchAndRender must call showError on fetch failure"
         )
-        assert has_empty_check, (
-            "Expected empty-value check logic to skip blank filter inputs"
+
+
+class TestReapplySort:
+    """reapplySort must re-sort data using current sort state WITHOUT toggling direction."""
+
+    @pytest.fixture(autouse=True)
+    def _load_js(self) -> None:
+        self.js = _read_static("app.js")
+        self.fn_body = _extract_js_function_body(self.js, "reapplySort")
+
+    def test_reapply_sort_function_defined(self) -> None:
+        """reapplySort function must be defined to fix the sort-direction bug."""
+        assert self.fn_body is not None, (
+            "Expected function reapplySort() { ... } in app.js — "
+            "sorts without toggling direction"
+        )
+
+    def test_reads_current_sort_column(self) -> None:
+        """Must read TableState.sortColumn."""
+        assert self.fn_body is not None
+        assert "TableState.sortColumn" in self.fn_body, (
+            "reapplySort must read the current sort column from TableState"
+        )
+
+    def test_reads_current_sort_direction(self) -> None:
+        """Must use TableState.sortDirection for comparison."""
+        assert self.fn_body is not None
+        assert "TableState.sortDirection" in self.fn_body, (
+            "reapplySort must use the current sort direction from TableState"
+        )
+
+    def test_does_not_toggle_direction(self) -> None:
+        """Must NOT contain direction-toggle logic (the key difference from sortByColumn)."""
+        assert self.fn_body is not None
+        # sortByColumn toggles with: TableState.sortDirection = TableState.sortDirection === "asc" ? "desc" : "asc"
+        # reapplySort must NOT reassign sortDirection — only read it for comparisons.
+        # We check for assignment patterns (= without preceding =, !, <, >) to
+        # distinguish from === comparisons.
+        has_assignment = bool(
+            re.search(r"TableState\.sortDirection\s*=[^=]", self.fn_body)
+        )
+        assert not has_assignment, (
+            "reapplySort must NOT assign to TableState.sortDirection — "
+            "it should preserve the current direction, not toggle it"
+        )
+
+    def test_sorts_original_items_copy(self) -> None:
+        """Must sort a copy of originalItems (never mutate)."""
+        assert self.fn_body is not None
+        assert "TableState.originalItems.slice()" in self.fn_body, (
+            "reapplySort must sort a .slice() copy of originalItems"
+        )
+
+    def test_calls_render_table(self) -> None:
+        """Must call renderTable with the sorted items."""
+        assert self.fn_body is not None
+        assert "renderTable(" in self.fn_body, (
+            "reapplySort must call renderTable to display the sorted data"
         )
 
 
@@ -488,41 +549,27 @@ class TestPreserveStateAfterFilter:
     def _load_js(self) -> None:
         self.js = _read_static("app.js")
 
-    def test_table_state_object_exists(self) -> None:
-        """TableState (or equivalent state) object must exist to track sort/column state.
-
-        Spec: 'Preserve column visibility and sort state.'
-        """
-        assert "TableState" in self.js or "state" in self.js.lower(), (
-            "Expected a state object (TableState) to preserve sort/column state across filter"
+    def test_table_state_has_filter_fields(self) -> None:
+        """TableState must include filterFields to store discovered fields."""
+        assert "filterFields" in self.js, (
+            "TableState must have filterFields property"
         )
 
-    def test_hidden_columns_preserved(self) -> None:
-        """hiddenColumns state must persist across filter operations.
-
-        Spec: 'Preserve column visibility ... after filtering.'
-        Acceptance criteria: 'Column visibility and sorting preserved after filtering.'
-        """
-        assert "hiddenColumns" in self.js or "hidden" in self.js.lower(), (
-            "Expected hiddenColumns state to be preserved after filtering"
+    def test_hidden_columns_not_cleared_on_filter(self) -> None:
+        """fetchAndRender must not reset hiddenColumns."""
+        fn_body = _extract_js_function_body(self.js, "fetchAndRender")
+        assert fn_body is not None
+        # It should never assign a new value to hiddenColumns
+        assert "hiddenColumns = {}" not in fn_body, (
+            "fetchAndRender must not reset hiddenColumns — they must persist"
         )
 
-    def test_sort_state_preserved(self) -> None:
-        """Sort column and direction must persist across filter operations.
-
-        Spec: 'Preserve ... sort state.'
-        Acceptance criteria: 'Column visibility and sorting preserved after filtering.'
-        """
-        has_sort_state = any(
-            token in self.js
-            for token in [
-                "sortColumn",
-                "sortDirection",
-                "sortOrder",
-            ]
-        )
-        assert has_sort_state, (
-            "Expected sort state (sortColumn, sortDirection) to be preserved after filtering"
+    def test_sort_preserved_via_reapply_sort(self) -> None:
+        """fetchAndRender must use reapplySort() to re-apply sort without toggling."""
+        fn_body = _extract_js_function_body(self.js, "fetchAndRender")
+        assert fn_body is not None
+        assert "reapplySort()" in fn_body, (
+            "fetchAndRender must call reapplySort() to preserve sort direction"
         )
 
 
@@ -532,80 +579,95 @@ class TestPreserveStateAfterFilter:
 
 
 class TestClearFilters:
-    """'Clear' button must reset all filter inputs and refetch unfiltered data."""
+    """clearFilters must reset inputs and delegate to fetchAndRender."""
 
     @pytest.fixture(autouse=True)
     def _load_js(self) -> None:
         self.js = _read_static("app.js")
-        self.js_lower = self.js.lower()
+        self.fn_body = _extract_js_function_body(self.js, "clearFilters")
 
-    def test_clear_button_exists(self) -> None:
-        """A 'Clear' button must exist in the filter panel.
-
-        Spec: 'Add a "Clear" button that resets all filter inputs to empty/default
-        and refetches unfiltered data.'
-        """
-        has_clear = any(
-            token in self.js
-            for token in [
-                "Clear",
-                "clear",
-                "Reset",
-                "reset",
-            ]
-        )
-        assert has_clear, (
-            "Expected a 'Clear' or 'Reset' button in the filter panel"
+    def test_clear_filters_function_defined(self) -> None:
+        """clearFilters function must be defined."""
+        assert self.fn_body is not None, (
+            "Expected function clearFilters() { ... } in app.js"
         )
 
-    def test_clear_resets_input_values(self) -> None:
-        """Clear must reset all filter inputs to empty/default.
-
-        Spec: 'resets all filter inputs to empty/default.'
-        """
-        has_reset_logic = any(
-            token in self.js
-            for token in [
-                '= ""',
-                "= ''",
-                ".value =",
-                "reset",
-                "selectedIndex",
-                "selected",
-                'value = ""',
-                "value = ''",
-            ]
-        )
-        assert has_reset_logic, (
-            "Expected input reset logic (value = '', selectedIndex = 0, etc.) "
-            "in clear filter handler"
+    def test_resets_select_elements(self) -> None:
+        """Must reset <select> elements via selectedIndex = 0."""
+        assert self.fn_body is not None
+        assert "selectedIndex" in self.fn_body, (
+            "clearFilters must reset <select> elements via selectedIndex = 0"
         )
 
-    def test_clear_refetches_unfiltered_data(self) -> None:
-        """Clear must refetch unfiltered data from the API.
-
-        Spec: 'refetches unfiltered data.'
-        """
-        # The fetch call should be reusable (called on clear as well as on apply)
-        fetch_count = self.js.count("fetch(")
-        assert fetch_count >= 2, (
-            f"Expected at least 2 fetch() calls (initial load + filter/clear), "
-            f"found {fetch_count}"
+    def test_resets_input_values(self) -> None:
+        """Must reset <input> values to empty string."""
+        assert self.fn_body is not None
+        assert '.value = ""' in self.fn_body or ".value = ''" in self.fn_body, (
+            "clearFilters must reset input values to empty string"
         )
 
-    def test_clear_button_has_click_handler(self) -> None:
-        """Clear button must have a click event handler."""
-        has_event = any(
-            token in self.js
-            for token in [
-                "addEventListener",
-                "onclick",
-                "click",
-            ]
+    def test_delegates_to_fetch_and_render(self) -> None:
+        """Must call fetchAndRender(params) instead of duplicating fetch logic."""
+        assert self.fn_body is not None
+        assert "fetchAndRender(params)" in self.fn_body, (
+            "clearFilters must delegate to fetchAndRender(params) — "
+            "no duplicated fetch/render logic"
         )
-        assert has_event, (
-            "Expected click event handler on the Clear button"
+
+    def test_does_not_duplicate_fetch_logic(self) -> None:
+        """clearFilters must NOT contain its own fetch() call."""
+        assert self.fn_body is not None
+        assert "fetch(" not in self.fn_body, (
+            "clearFilters must not call fetch() directly — "
+            "it should use fetchAndRender() to avoid code duplication"
         )
+
+
+# ===================================================================
+# Code quality: no duplication between applyFilters / clearFilters
+# ===================================================================
+
+
+class TestNoDuplicatedFetchLogic:
+    """applyFilters and clearFilters must both delegate to fetchAndRender,
+    not duplicate the fetch → parse → sort → render pipeline."""
+
+    @pytest.fixture(autouse=True)
+    def _load_js(self) -> None:
+        self.js = _read_static("app.js")
+        self.apply_body = _extract_js_function_body(self.js, "applyFilters")
+        self.clear_body = _extract_js_function_body(self.js, "clearFilters")
+        self.fetch_render_body = _extract_js_function_body(self.js, "fetchAndRender")
+
+    def test_fetch_and_render_exists(self) -> None:
+        """A shared fetchAndRender function must exist."""
+        assert self.fetch_render_body is not None, (
+            "fetchAndRender must exist as a shared helper"
+        )
+
+    def test_apply_filters_has_no_fetch(self) -> None:
+        """applyFilters must not contain its own fetch() call."""
+        assert self.apply_body is not None
+        assert "fetch(" not in self.apply_body, (
+            "applyFilters should delegate to fetchAndRender, not call fetch() directly"
+        )
+
+    def test_clear_filters_has_no_fetch(self) -> None:
+        """clearFilters must not contain its own fetch() call."""
+        assert self.clear_body is not None
+        assert "fetch(" not in self.clear_body, (
+            "clearFilters should delegate to fetchAndRender, not call fetch() directly"
+        )
+
+    def test_apply_filters_calls_fetch_and_render(self) -> None:
+        """applyFilters must call fetchAndRender."""
+        assert self.apply_body is not None
+        assert "fetchAndRender(" in self.apply_body
+
+    def test_clear_filters_calls_fetch_and_render(self) -> None:
+        """clearFilters must call fetchAndRender."""
+        assert self.clear_body is not None
+        assert "fetchAndRender(" in self.clear_body
 
 
 # ===================================================================
@@ -619,27 +681,35 @@ class TestFilterPanelCSS:
     @pytest.fixture(autouse=True)
     def _load_css(self) -> None:
         self.css = _read_static("style.css")
-        self.css_lower = self.css.lower()
 
-    def test_filter_panel_has_styling(self) -> None:
-        """Filter panel elements should have CSS styling.
+    def test_filter_toggle_has_styling(self) -> None:
+        """#filter-toggle must have CSS rules."""
+        blocks = _find_blocks(self.css, "#filter-toggle")
+        assert len(blocks) > 0, "Expected CSS rules for #filter-toggle"
 
-        The filter panel should use existing button and form styles,
-        or have dedicated filter-specific styles.
-        """
-        # At minimum the existing btn and form-group styles must exist
-        has_btn_styles = _find_blocks(self.css, ".btn")
-        has_form_styles = _find_blocks(self.css, ".form-group")
-        assert len(has_btn_styles) > 0, (
-            "Expected .btn CSS class for filter panel buttons"
-        )
-        assert len(has_form_styles) > 0, (
-            "Expected .form-group CSS class for filter input layout"
-        )
+    def test_filter_inputs_has_styling(self) -> None:
+        """#filter-inputs must have CSS rules."""
+        blocks = _find_blocks(self.css, "#filter-inputs")
+        assert len(blocks) > 0, "Expected CSS rules for #filter-inputs"
+
+    def test_filter_buttons_has_styling(self) -> None:
+        """.filter-buttons must have CSS rules for button layout."""
+        blocks = _find_blocks(self.css, ".filter-buttons")
+        assert len(blocks) > 0, "Expected CSS rules for .filter-buttons"
+
+    def test_btn_secondary_exists(self) -> None:
+        """.btn-secondary must exist for the Clear button."""
+        blocks = _find_blocks(self.css, ".btn-secondary")
+        assert len(blocks) > 0, "Expected .btn-secondary CSS for Clear button"
+
+    def test_select_input_styled(self) -> None:
+        """<select> elements in filter panel must be styled."""
+        blocks = _find_blocks(self.css, "select")
+        assert len(blocks) > 0, "Expected CSS rules for select elements"
 
 
 # ===================================================================
-# Acceptance criteria: Integration-level checks
+# Acceptance criteria: integration-level checks
 # ===================================================================
 
 
@@ -652,78 +722,61 @@ class TestFilterPanelAcceptanceCriteria:
         self.html = _read_static("table.html")
         self.css = _read_static("style.css")
 
-    def test_filter_panel_collapsible_details(self) -> None:
-        """AC: Filter panel appears as collapsible <details> on table page."""
-        # Verify HTML has a filter-related <details>
-        details_matches = re.findall(
-            r'<details[^>]*id\s*=\s*["\']([^"\']*)["\'][^>]*>',
-            self.html,
-            flags=re.IGNORECASE,
-        )
-        has_filter_details = any("filter" in d.lower() for d in details_matches)
-        assert has_filter_details, (
-            "AC: Expected <details> element with 'filter' in its id attribute"
-        )
+    def test_filter_panel_is_collapsible_details(self) -> None:
+        """AC: Filter panel appears as collapsible <details id='filter-toggle'> on table page."""
+        assert re.search(
+            r'<details[^>]*id\s*=\s*["\']filter-toggle["\']', self.html
+        ), "Expected <details id='filter-toggle'> in table.html"
 
     def test_inputs_match_field_types(self) -> None:
-        """AC: Inputs match field types (text, select, datetime-local)."""
-        has_text = "text" in self.js
-        has_select = any(
-            token in self.js for token in ["select", "SELECT", "Select"]
-        )
-        has_datetime = any(
-            token in self.js for token in ["datetime-local", "datetime", "date"]
-        )
-        assert has_text, "AC: Expected text input type for string fields"
-        assert has_select, "AC: Expected select element for boolean fields"
-        assert has_datetime, "AC: Expected datetime-local input for date range fields"
+        """AC: renderFilterPanel creates text, select, and datetime-local inputs."""
+        fn_body = _extract_js_function_body(self.js, "renderFilterPanel")
+        assert fn_body is not None
+        assert '"text"' in fn_body, "AC: Expected text input type"
+        assert 'createElement("select")' in fn_body, "AC: Expected select element"
+        assert '"datetime-local"' in fn_body, "AC: Expected datetime-local input"
 
-    def test_apply_sends_query_params(self) -> None:
-        """AC: 'Apply Filters' sends correct query params to API and re-renders table."""
-        # Must build query params
-        has_query_params = any(
-            token in self.js
-            for token in ["URLSearchParams", "encodeURIComponent", "?", "&"]
-        )
-        # Must call fetch
-        has_fetch = "fetch(" in self.js
-        # Must re-render
-        has_render = "renderTable" in self.js
-        assert has_query_params, (
-            "AC: Expected query parameter construction for API call"
-        )
-        assert has_fetch, "AC: Expected fetch() call to API"
-        assert has_render, "AC: Expected renderTable() call to re-render"
+    def test_apply_sends_query_params_and_rerenders(self) -> None:
+        """AC: applyFilters builds query params and delegates to fetchAndRender."""
+        apply_body = _extract_js_function_body(self.js, "applyFilters")
+        assert apply_body is not None
+        assert "URLSearchParams" in apply_body, "AC: Expected URL param construction"
+        assert "fetchAndRender(" in apply_body, "AC: Expected fetchAndRender call"
 
-    def test_clear_resets_and_shows_all(self) -> None:
-        """AC: 'Clear' resets filters and shows all records."""
-        has_clear = any(
-            token in self.js for token in ["Clear", "clear", "Reset", "reset"]
+    def test_clear_resets_and_refetches(self) -> None:
+        """AC: clearFilters resets inputs and delegates to fetchAndRender."""
+        clear_body = _extract_js_function_body(self.js, "clearFilters")
+        assert clear_body is not None
+        assert "selectedIndex" in clear_body or '.value = ""' in clear_body, (
+            "AC: Expected input reset logic"
         )
-        assert has_clear, (
-            "AC: Expected Clear/Reset functionality in app.js"
-        )
+        assert "fetchAndRender(" in clear_body, "AC: Expected fetchAndRender call"
 
     def test_column_visibility_preserved(self) -> None:
-        """AC: Column visibility preserved after filtering."""
-        assert "hiddenColumns" in self.js, (
-            "AC: Expected hiddenColumns state to be preserved across filter operations"
+        """AC: hiddenColumns state is not reset by fetchAndRender."""
+        fn_body = _extract_js_function_body(self.js, "fetchAndRender")
+        assert fn_body is not None
+        assert "hiddenColumns" not in fn_body or "hiddenColumns = {}" not in fn_body, (
+            "AC: fetchAndRender must not reset hiddenColumns"
         )
 
-    def test_sorting_preserved(self) -> None:
-        """AC: Sorting preserved after filtering."""
-        assert "sortColumn" in self.js and "sortDirection" in self.js, (
-            "AC: Expected sortColumn and sortDirection to be preserved across filter operations"
+    def test_sorting_preserved_via_reapply_sort(self) -> None:
+        """AC: Sort is preserved by reapplySort() (not sortByColumn toggle)."""
+        fn_body = _extract_js_function_body(self.js, "fetchAndRender")
+        assert fn_body is not None
+        assert "reapplySort()" in fn_body, (
+            "AC: fetchAndRender must call reapplySort to preserve sort direction"
+        )
+        assert "sortByColumn(" not in fn_body, (
+            "AC: fetchAndRender must NOT call sortByColumn (it toggles direction)"
         )
 
     def test_pagination_resets_to_page_one(self) -> None:
-        """AC: Pagination resets to page 1 on filter apply."""
-        has_page_one = any(
-            token in self.js
-            for token in ["page=1", "page = 1", "currentPage = 1"]
-        )
-        assert has_page_one, (
-            "AC: Expected pagination to reset to page 1 on filter apply"
+        """AC: applyFilters resets pagination to page 1."""
+        apply_body = _extract_js_function_body(self.js, "applyFilters")
+        assert apply_body is not None
+        assert re.search(r'append\(\s*"page"\s*,\s*"1"\s*\)', apply_body), (
+            "AC: applyFilters must set page=1"
         )
 
 
@@ -740,61 +793,30 @@ class TestExistingFunctionalityPreservedWithFilters:
         self.js = _read_static("app.js")
         self.html = _read_static("table.html")
         self.css = _read_static("style.css")
+        self.fn_names = _js_function_names(self.js)
 
     def test_tables_array_still_defined(self) -> None:
         """TABLES constant must still exist."""
         assert "TABLES" in self.js
 
-    def test_table_state_still_defined(self) -> None:
-        """TableState object must still exist with all original properties."""
-        assert "TableState" in self.js
-        assert "sortColumn" in self.js
-        assert "sortDirection" in self.js
-        assert "headers" in self.js
-        assert "originalItems" in self.js
-        assert "items" in self.js
-        assert "hiddenColumns" in self.js
+    def test_table_state_has_required_properties(self) -> None:
+        """TableState object must still have all original + new properties."""
+        for prop in ["sortColumn", "sortDirection", "headers", "originalItems",
+                      "items", "hiddenColumns", "filterFields"]:
+            assert prop in self.js, f"TableState must have '{prop}' property"
 
-    def test_fetch_api_still_present(self) -> None:
-        """fetch() call to /api/v1/{table} must still exist."""
-        assert "fetch(" in self.js
-        assert "/api/v1/" in self.js
-
-    def test_render_table_function_exists(self) -> None:
-        """renderTable function must still exist."""
-        assert "renderTable" in self.js
-
-    def test_sort_by_column_function_exists(self) -> None:
-        """sortByColumn function must still exist."""
-        assert "sortByColumn" in self.js
-
-    def test_render_column_toggles_function_exists(self) -> None:
-        """renderColumnToggles function must still exist."""
-        assert "renderColumnToggles" in self.js
-
-    def test_toggle_column_visibility_function_exists(self) -> None:
-        """toggleColumnVisibility function must still exist."""
-        assert "toggleColumnVisibility" in self.js
-
-    def test_show_error_function_exists(self) -> None:
-        """showError function must still exist."""
-        assert "showError" in self.js
-
-    def test_escape_html_function_exists(self) -> None:
-        """escapeHtml function must still exist for XSS prevention."""
-        assert "escapeHtml" in self.js
-
-    def test_init_table_page_still_exists(self) -> None:
-        """initTablePage function must still be present."""
-        assert "initTablePage" in self.js
-
-    def test_init_edit_page_still_exists(self) -> None:
-        """initEditPage function must still be present."""
-        assert "initEditPage" in self.js
-
-    def test_init_create_page_still_exists(self) -> None:
-        """initCreatePage function must still be present."""
-        assert "initCreatePage" in self.js
+    def test_required_functions_exist(self) -> None:
+        """All required functions must be defined in app.js."""
+        required = [
+            "escapeHtml", "discoverFilterFields", "renderFilterPanel",
+            "fetchAndRender", "reapplySort", "applyFilters", "clearFilters",
+            "initTablePage", "renderTable", "sortByColumn",
+            "renderColumnToggles", "toggleColumnVisibility", "showError",
+            "initEditPage", "initCreatePage", "discoverCreateFields",
+            "resolveRef",
+        ]
+        for name in required:
+            assert name in self.fn_names, f"Function '{name}' must exist in app.js"
 
     def test_column_toggle_details_preserved(self) -> None:
         """Original Columns <details id='column-toggle'> must still exist."""
@@ -804,20 +826,14 @@ class TestExistingFunctionalityPreservedWithFilters:
         """Original column-checkboxes div must still exist."""
         assert "column-checkboxes" in self.html
 
-    def test_loading_element_still_in_html(self) -> None:
-        """Loading indicator must still be in table.html."""
-        assert "loading" in self.html.lower()
-
-    def test_error_element_still_in_html(self) -> None:
-        """Error display must still be in table.html."""
-        assert "error" in self.html.lower()
+    def test_loading_and_error_elements_still_in_html(self) -> None:
+        """Loading and error display elements must still be in table.html."""
+        assert 'id="loading"' in self.html
+        assert 'id="error"' in self.html
 
     def test_data_table_element_still_in_html(self) -> None:
-        """data-table element must still exist for JS to target."""
+        """data-table, table-head, and table-body must still exist."""
         assert "data-table" in self.html
-
-    def test_table_head_and_body_still_in_html(self) -> None:
-        """thead (table-head) and tbody (table-body) must still exist."""
         assert "table-head" in self.html
         assert "table-body" in self.html
 
@@ -825,31 +841,20 @@ class TestExistingFunctionalityPreservedWithFilters:
         """Add Record button must still exist."""
         assert "add-record-btn" in self.html
 
-    def test_back_to_dashboard_link_preserved(self) -> None:
-        """Back to dashboard link must still be present."""
-        assert "index.html" in self.html
-
-    def test_style_links_preserved_in_html(self) -> None:
-        """table.html must still link to style.css."""
+    def test_style_and_script_links_preserved(self) -> None:
+        """table.html must still link to style.css and app.js."""
         assert "style.css" in self.html
-
-    def test_script_links_preserved_in_html(self) -> None:
-        """table.html must still link to app.js."""
         assert "app.js" in self.html
 
     def test_col_hidden_class_still_exists(self) -> None:
         """style.css must still define .col-hidden."""
         col_hidden_blocks = _find_blocks(self.css, "col-hidden")
-        assert len(col_hidden_blocks) > 0, (
-            "Expected .col-hidden CSS class to still exist in style.css"
-        )
+        assert len(col_hidden_blocks) > 0, "Expected .col-hidden CSS"
 
     def test_sortable_header_class_still_exists(self) -> None:
         """style.css must still define .sortable-header."""
         sortable_blocks = _find_blocks(self.css, "sortable-header")
-        assert len(sortable_blocks) > 0, (
-            "Expected .sortable-header CSS class to still exist in style.css"
-        )
+        assert len(sortable_blocks) > 0, "Expected .sortable-header CSS"
 
     def test_hover_style_preserved(self) -> None:
         """tbody tr:hover background style must still work."""
@@ -863,17 +868,7 @@ class TestExistingFunctionalityPreservedWithFilters:
             _css_has_property(body, "cursor", "pointer")
             for body in tbody_tr_blocks
         )
-        assert has_pointer, (
-            "Expected cursor: pointer on 'tbody tr' to still be in style.css"
-        )
-
-    def test_discover_create_fields_still_exists(self) -> None:
-        """discoverCreateFields function must still be present."""
-        assert "discoverCreateFields" in self.js
-
-    def test_resolve_ref_still_exists(self) -> None:
-        """resolveRef function must still be present."""
-        assert "resolveRef" in self.js
+        assert has_pointer, "Expected cursor: pointer on 'tbody tr'"
 
 
 # ===================================================================

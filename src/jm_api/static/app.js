@@ -217,6 +217,74 @@ function renderFilterPanel(filterFields) {
 }
 
 /**
+ * Shared helper: fetch data from the API with the given params, update
+ * TableState, re-apply current sort (without toggling direction), and
+ * re-render the table.  Used by both applyFilters() and clearFilters()
+ * to avoid duplicating fetch → parse → sort → render logic.
+ */
+function fetchAndRender(params) {
+  var url = "/api/v1/" + TableState.table + "?" + params.toString();
+  var loadingEl = document.getElementById("loading");
+  if (loadingEl) loadingEl.style.display = "block";
+
+  fetch(url)
+    .then(function (response) {
+      if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+      }
+      return response.json();
+    })
+    .then(function (data) {
+      if (loadingEl) loadingEl.style.display = "none";
+
+      var items = data.items || [];
+      var headers = items.length > 0 ? Object.keys(items[0]) : TableState.headers;
+      TableState.headers = headers;
+      TableState.originalItems = items.slice();
+      TableState.items = items.slice();
+
+      if (items.length === 0) {
+        renderTable(TableState.headers, [], TableState.table);
+        return;
+      }
+
+      // Re-apply current sort without toggling direction
+      if (TableState.sortColumn) {
+        reapplySort();
+      } else {
+        renderTable(headers, TableState.items, TableState.table);
+      }
+    })
+    .catch(function (err) {
+      if (loadingEl) loadingEl.style.display = "none";
+      showError("Failed to load data: " + err.message);
+    });
+}
+
+/**
+ * Re-sort TableState.items using the current sortColumn and sortDirection
+ * without toggling the direction.  This preserves sort state when
+ * re-rendering after filter apply / clear.
+ */
+function reapplySort() {
+  var column = TableState.sortColumn;
+  var sorted = TableState.originalItems.slice().sort(function (a, b) {
+    var valA = a[column] !== null && a[column] !== undefined ? a[column] : "";
+    var valB = b[column] !== null && b[column] !== undefined ? b[column] : "";
+
+    if (typeof valA === "string") valA = valA.toLowerCase();
+    if (typeof valB === "string") valB = valB.toLowerCase();
+
+    if (valA < valB) return TableState.sortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return TableState.sortDirection === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  TableState.items = sorted;
+  renderTable(TableState.headers, sorted, TableState.table);
+}
+
+/**
  * Collect non-empty filter values and refetch data from the API.
  */
 function applyFilters() {
@@ -238,46 +306,7 @@ function applyFilters() {
     }
   }
 
-  var url = "/api/v1/" + TableState.table + "?" + params.toString();
-  var loadingEl = document.getElementById("loading");
-  if (loadingEl) loadingEl.style.display = "block";
-
-  fetch(url)
-    .then(function (response) {
-      if (!response.ok) {
-        throw new Error("HTTP " + response.status);
-      }
-      return response.json();
-    })
-    .then(function (data) {
-      if (loadingEl) loadingEl.style.display = "none";
-
-      var items = data.items || [];
-      if (items.length === 0) {
-        TableState.originalItems = [];
-        TableState.items = [];
-        // Re-render with empty data preserving headers
-        renderTable(TableState.headers, [], TableState.table);
-        return;
-      }
-
-      // Update headers if they changed (unlikely but safe)
-      var headers = Object.keys(items[0]);
-      TableState.headers = headers;
-      TableState.originalItems = items.slice();
-      TableState.items = items.slice();
-
-      // Re-apply sort if one was active
-      if (TableState.sortColumn) {
-        sortByColumn(TableState.sortColumn);
-      } else {
-        renderTable(headers, TableState.items, TableState.table);
-      }
-    })
-    .catch(function (err) {
-      if (loadingEl) loadingEl.style.display = "none";
-      showError("Failed to load data: " + err.message);
-    });
+  fetchAndRender(params);
 }
 
 /**
@@ -299,36 +328,10 @@ function clearFilters() {
   }
 
   // Refetch unfiltered data
-  var url = "/api/v1/" + TableState.table + "?page=1&per_page=20";
-  var loadingEl = document.getElementById("loading");
-  if (loadingEl) loadingEl.style.display = "block";
-
-  fetch(url)
-    .then(function (response) {
-      if (!response.ok) {
-        throw new Error("HTTP " + response.status);
-      }
-      return response.json();
-    })
-    .then(function (data) {
-      if (loadingEl) loadingEl.style.display = "none";
-
-      var items = data.items || [];
-      var headers = items.length > 0 ? Object.keys(items[0]) : TableState.headers;
-      TableState.headers = headers;
-      TableState.originalItems = items.slice();
-      TableState.items = items.slice();
-
-      if (TableState.sortColumn) {
-        sortByColumn(TableState.sortColumn);
-      } else {
-        renderTable(headers, items, TableState.table);
-      }
-    })
-    .catch(function (err) {
-      if (loadingEl) loadingEl.style.display = "none";
-      showError("Failed to load data: " + err.message);
-    });
+  var params = new URLSearchParams();
+  params.append("page", "1");
+  params.append("per_page", "20");
+  fetchAndRender(params);
 }
 
 document.addEventListener("DOMContentLoaded", function () {
