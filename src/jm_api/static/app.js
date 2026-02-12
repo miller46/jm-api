@@ -4,6 +4,8 @@ document.addEventListener("DOMContentLoaded", function () {
   // Detect which page we're on
   if (document.getElementById("data-table")) {
     initTablePage();
+  } else if (document.getElementById("edit-form")) {
+    initEditPage();
   } else if (document.getElementById("create-form")) {
     initCreatePage();
   }
@@ -48,7 +50,7 @@ function initTablePage() {
       }
 
       var headers = Object.keys(items[0]);
-      renderTable(headers, items);
+      renderTable(headers, items, table);
     })
     .catch(function (err) {
       if (loadingEl) loadingEl.style.display = "none";
@@ -56,7 +58,7 @@ function initTablePage() {
     });
 }
 
-function renderTable(headers, items) {
+function renderTable(headers, items, table) {
   var thead = document.getElementById("table-head");
   var tbody = document.getElementById("table-body");
 
@@ -68,13 +70,20 @@ function renderTable(headers, items) {
   headerRow += "</tr>";
   thead.innerHTML = headerRow;
 
-  // Build body rows
+  // Build body rows — first column (id) links to edit page
   var bodyHtml = "";
   for (var r = 0; r < items.length; r++) {
     bodyHtml += "<tr>";
     for (var c = 0; c < headers.length; c++) {
       var val = items[r][headers[c]];
-      bodyHtml += "<td>" + (val !== null && val !== undefined ? val : "") + "</td>";
+      var display = val !== null && val !== undefined ? val : "";
+      if (c === 0 && table) {
+        // Make the id column a clickable link to the edit page
+        var editHref = "edit.html?table=" + encodeURIComponent(table) + "&id=" + encodeURIComponent(display);
+        bodyHtml += '<td><a href="' + editHref + '">' + display + "</a></td>";
+      } else {
+        bodyHtml += "<td>" + display + "</td>";
+      }
     }
     bodyHtml += "</tr>";
   }
@@ -91,6 +100,116 @@ function showError(message) {
   if (loadingEl) {
     loadingEl.style.display = "none";
   }
+}
+
+function initEditPage() {
+  var params = new URLSearchParams(location.search);
+  var table = params.get("table");
+  var id = params.get("id");
+
+  if (!table || !id) {
+    showError("Missing table or id in URL.");
+    return;
+  }
+
+  var titleEl = document.getElementById("edit-title");
+  if (titleEl) {
+    titleEl.textContent = "Edit " + table + " Record";
+  }
+
+  // Update back link to point to the correct table
+  var backLink = document.getElementById("back-link");
+  if (backLink) {
+    backLink.href = "table.html?table=" + encodeURIComponent(table);
+  }
+
+  // Fetch the existing record and field schema, then render form
+  Promise.all([
+    fetch("/api/v1/" + table + "/" + id).then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }),
+    fetch("/openapi.json").then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }),
+  ])
+    .then(function (results) {
+      var record = results[0];
+      var spec = results[1];
+      var fields = discoverCreateFields(spec, table);
+      if (!fields || fields.length === 0) {
+        showError("Cannot determine fields for " + table + " from API schema.");
+        return;
+      }
+      renderEditForm(table, id, fields, record);
+    })
+    .catch(function (err) {
+      showError("Failed to load record: " + err.message);
+    });
+}
+
+function renderEditForm(table, id, fields, record) {
+  var form = document.getElementById("edit-form");
+  if (!form) return;
+
+  var html = "";
+  for (var j = 0; j < fields.length; j++) {
+    var field = fields[j];
+    var currentVal = record[field];
+    var displayVal = currentVal !== null && currentVal !== undefined ? currentVal : "";
+    html += '<div class="form-group">';
+    html += '<label for="field-' + field + '">' + field + "</label>";
+    html += '<input type="text" id="field-' + field + '" name="' + field + '" value="' + displayVal + '">';
+    html += "</div>";
+  }
+  html += '<button type="submit" class="btn btn-primary">Save</button>';
+  form.innerHTML = html;
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    submitEditForm(table, id, fields);
+  });
+}
+
+function submitEditForm(table, id, fields) {
+  var errorEl = document.getElementById("error");
+  if (errorEl) {
+    errorEl.style.display = "none";
+  }
+
+  var body = {};
+  for (var i = 0; i < fields.length; i++) {
+    var input = document.getElementById("field-" + fields[i]);
+    if (input && input.value !== "") {
+      // Try to parse booleans
+      if (input.value === "true") {
+        body[fields[i]] = true;
+      } else if (input.value === "false") {
+        body[fields[i]] = false;
+      } else {
+        body[fields[i]] = input.value;
+      }
+    }
+  }
+
+  fetch("/api/v1/" + table + "/" + id, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  })
+    .then(function (response) {
+      if (!response.ok) {
+        return response.json().then(function (err) {
+          throw new Error(formatError(err));
+        });
+      }
+      // Success — redirect to table page
+      location.href = "table.html?table=" + encodeURIComponent(table);
+    })
+    .catch(function (err) {
+      showError(err.message);
+    });
 }
 
 function initCreatePage() {

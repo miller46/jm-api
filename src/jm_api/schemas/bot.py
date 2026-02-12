@@ -25,6 +25,14 @@ class BotCreate(BaseModel):
     )
 
 
+class BotUpdate(BaseModel):
+    """Schema for updating a bot. All fields optional for partial updates."""
+
+    rig_id: str | None = None
+    kill_switch: bool | None = None
+    last_run_log: str | None = None
+
+
 class BotResponse(BaseModel):
     """Single bot response schema."""
 

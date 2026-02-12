@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from starlette.status import HTTP_201_CREATED, HTTP_409_CONFLICT
+from starlette.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_409_CONFLICT
 
 from jm_api.db.session import get_db
 from jm_api.schemas.generic import ListResponse, NotFoundError
@@ -170,6 +170,66 @@ def create_create_router(
         response_model=response_schema,
         status_code=HTTP_201_CREATED,
         name=f"create_{name_lower}",
+    )
+
+    return router
+
+
+def create_update_router(
+    *,
+    prefix: str,
+    tags: list[str],
+    model: type,
+    response_schema: type,
+    update_schema: type,
+    resource_name: str,
+    id_pattern: str = r"^[a-zA-Z0-9]{32}$",
+) -> APIRouter:
+    """Create an APIRouter with a PUT endpoint for updating records.
+
+    Accepts partial updates — only provided (non-None) fields are updated.
+
+    Args:
+        prefix: URL prefix (e.g. "/bots").
+        tags: OpenAPI tags.
+        model: SQLAlchemy model class.
+        response_schema: Pydantic response schema.
+        update_schema: Pydantic schema for the request body (all fields optional).
+        resource_name: Human-readable name for 404 messages.
+        id_pattern: Regex pattern for path ID validation.
+
+    Returns:
+        Configured APIRouter with PUT "/{item_id}" route.
+    """
+    router = APIRouter(prefix=prefix, tags=tags)
+    name_lower = resource_name.lower()
+
+    def update_item(item_id, payload, *, db: Session = Depends(get_db)) -> Any:
+        item = db.get(model, item_id)
+        if item is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"message": f"{resource_name} not found", "id": item_id},
+            )
+        update_data = payload.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(item, field, value)
+        db.commit()
+        db.refresh(item)
+        return response_schema.model_validate(item)
+
+    update_item.__annotations__["item_id"] = str
+    update_item.__annotations__["payload"] = update_schema
+    update_item.__name__ = f"update_{name_lower}"
+
+    router.add_api_route(
+        "/{item_id}",
+        update_item,
+        methods=["PUT"],
+        response_model=response_schema,
+        status_code=HTTP_200_OK,
+        responses={404: {"model": NotFoundError}},
+        name=f"update_{name_lower}",
     )
 
     return router
