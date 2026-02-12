@@ -1,12 +1,29 @@
 const TABLES = ["bots"];
 
-// Sort state — no sort applied on initial load
-var currentSortColumn = null;
-var currentSortDirection = null;
-var currentHeaders = [];
-var currentItems = [];
-var currentTable = "";
-var hiddenColumns = {};
+// Encapsulated table page state — avoids fragile module-level mutable globals
+var TableState = {
+  sortColumn: null,
+  sortDirection: null,
+  headers: [],
+  originalItems: [],
+  items: [],
+  table: "",
+  hiddenColumns: {}
+};
+
+/**
+ * Escape HTML special characters to prevent XSS when interpolating
+ * user-controlled or API-sourced data into innerHTML strings.
+ */
+function escapeHtml(str) {
+  if (str === null || str === undefined) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
 document.addEventListener("DOMContentLoaded", function () {
   // Detect which page we're on
@@ -22,7 +39,7 @@ document.addEventListener("DOMContentLoaded", function () {
 function initTablePage() {
   const params = new URLSearchParams(location.search);
   const table = params.get("table");
-  currentTable = table || "";
+  TableState.table = table || "";
 
   if (!table) {
     showError("No table specified in URL.");
@@ -59,10 +76,11 @@ function initTablePage() {
       }
 
       var headers = Object.keys(items[0]);
-      currentHeaders = headers;
-      currentItems = items;
+      TableState.headers = headers;
+      TableState.originalItems = items.slice();
+      TableState.items = items.slice();
       renderColumnToggles(headers);
-      renderTable(headers, items);
+      renderTable(headers, TableState.items);
     })
     .catch(function (err) {
       if (loadingEl) loadingEl.style.display = "none";
@@ -77,12 +95,12 @@ function renderTable(headers, items) {
   // Build header row with sort indicators
   var headerRow = "<tr>";
   for (var i = 0; i < headers.length; i++) {
-    var hiddenClass = hiddenColumns[headers[i]] ? " col-hidden" : "";
+    var hiddenClass = TableState.hiddenColumns[headers[i]] ? " col-hidden" : "";
     var sortIndicator = "";
-    if (currentSortColumn === headers[i]) {
-      sortIndicator = currentSortDirection === "asc" ? " \u25B2" : " \u25BC";
+    if (TableState.sortColumn === headers[i]) {
+      sortIndicator = TableState.sortDirection === "asc" ? " \u25B2" : " \u25BC";
     }
-    headerRow += '<th class="sortable-header' + hiddenClass + '" data-col-index="' + i + '">' + headers[i] + sortIndicator + "</th>";
+    headerRow += '<th class="sortable-header' + hiddenClass + '" data-col-index="' + i + '">' + escapeHtml(headers[i]) + sortIndicator + "</th>";
   }
   headerRow += "</tr>";
   thead.innerHTML = headerRow;
@@ -100,50 +118,54 @@ function renderTable(headers, items) {
   var bodyHtml = "";
   for (var r = 0; r < items.length; r++) {
     var rowId = items[r].id !== null && items[r].id !== undefined ? items[r].id : "";
-    bodyHtml += '<tr data-row-id="' + rowId + '">';
+    bodyHtml += '<tr data-row-id="' + escapeHtml(rowId) + '">';
     for (var c = 0; c < headers.length; c++) {
-      var hiddenClass = hiddenColumns[headers[c]] ? " col-hidden" : "";
+      var hiddenClass = TableState.hiddenColumns[headers[c]] ? " col-hidden" : "";
       var val = items[r][headers[c]];
-      bodyHtml += '<td class="' + hiddenClass.trim() + '">' + (val !== null && val !== undefined ? val : "") + "</td>";
+      bodyHtml += '<td class="' + hiddenClass.trim() + '">' + escapeHtml(val) + "</td>";
     }
     bodyHtml += "</tr>";
   }
   tbody.innerHTML = bodyHtml;
 
-  // Attach row click handlers for navigation to edit page
+  // Attach row click handlers — guarded: edit.html does not exist yet,
+  // so log intent to console instead of navigating to a 404
   var rows = tbody.querySelectorAll("tr");
   for (var rr = 0; rr < rows.length; rr++) {
     rows[rr].addEventListener("click", function () {
       var rowId = this.getAttribute("data-row-id");
-      if (currentTable && rowId !== "") {
-        location.href = "edit.html?table=" + encodeURIComponent(currentTable) + "&id=" + encodeURIComponent(rowId);
+      if (TableState.table && rowId !== "") {
+        // TODO: navigate to edit.html once it exists
+        console.log("Row clicked: table=" + TableState.table + ", id=" + rowId);
       }
     });
   }
 }
 
 function sortByColumn(column) {
-  if (currentSortColumn === column) {
+  if (TableState.sortColumn === column) {
     // Toggle direction
-    currentSortDirection = currentSortDirection === "asc" ? "desc" : "asc";
+    TableState.sortDirection = TableState.sortDirection === "asc" ? "desc" : "asc";
   } else {
-    currentSortColumn = column;
-    currentSortDirection = "asc";
+    TableState.sortColumn = column;
+    TableState.sortDirection = "asc";
   }
 
-  currentItems.sort(function (a, b) {
+  // Sort a shallow copy — never mutate originalItems
+  var sorted = TableState.originalItems.slice().sort(function (a, b) {
     var valA = a[column] !== null && a[column] !== undefined ? a[column] : "";
     var valB = b[column] !== null && b[column] !== undefined ? b[column] : "";
 
     if (typeof valA === "string") valA = valA.toLowerCase();
     if (typeof valB === "string") valB = valB.toLowerCase();
 
-    if (valA < valB) return currentSortDirection === "asc" ? -1 : 1;
-    if (valA > valB) return currentSortDirection === "asc" ? 1 : -1;
+    if (valA < valB) return TableState.sortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return TableState.sortDirection === "asc" ? 1 : -1;
     return 0;
   });
 
-  renderTable(currentHeaders, currentItems);
+  TableState.items = sorted;
+  renderTable(TableState.headers, sorted);
 }
 
 function renderColumnToggles(headers) {
@@ -170,11 +192,11 @@ function renderColumnToggles(headers) {
 
 function toggleColumnVisibility(column, visible) {
   if (visible) {
-    delete hiddenColumns[column];
+    delete TableState.hiddenColumns[column];
   } else {
-    hiddenColumns[column] = true;
+    TableState.hiddenColumns[column] = true;
   }
-  renderTable(currentHeaders, currentItems);
+  renderTable(TableState.headers, TableState.items);
 }
 
 function showError(message) {

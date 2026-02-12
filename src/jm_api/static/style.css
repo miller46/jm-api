@@ -67,6 +67,9 @@ th, td {
 th {
   background: #e9ecef;
   font-weight: 600;
+}
+
+.sortable-header {
   cursor: pointer;
 }
 

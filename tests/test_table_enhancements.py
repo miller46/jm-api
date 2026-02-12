@@ -481,21 +481,24 @@ class TestSortableHeaderCSS:
         self.css = _read_static("style.css")
 
     def test_th_cursor_pointer(self) -> None:
-        """<th> elements should have cursor: pointer to indicate sortability.
+        """Sortable header elements should have cursor: pointer to indicate sortability.
 
         While not explicitly required by spec, it's standard UX for clickable
         headers. The spec says 'Make each column header clickable.'
+        Cursor may be on bare 'th', scoped '.sortable-header', or '#data-table th'.
         """
         th_blocks = _find_blocks(self.css, "th")
+        sortable_blocks = _find_blocks(self.css, "sortable-header")
+        all_blocks = th_blocks + sortable_blocks
         has_pointer = any(
             _css_has_property(body, "cursor", "pointer")
-            for body in th_blocks
+            for body in all_blocks
         )
         # Also check for inline style in JS
         js = _read_static("app.js")
         has_inline_pointer = "cursor" in js and "pointer" in js
         assert has_pointer or has_inline_pointer, (
-            "Expected cursor: pointer on <th> elements (CSS or inline) "
+            "Expected cursor: pointer on sortable header elements (CSS or inline) "
             "to indicate column headers are clickable for sorting"
         )
 
