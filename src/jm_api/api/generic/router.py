@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from starlette.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_409_CONFLICT
+from starlette.status import HTTP_201_CREATED, HTTP_409_CONFLICT
 
 from jm_api.db.session import get_db
 from jm_api.schemas.generic import ListResponse, NotFoundError
@@ -218,7 +218,9 @@ def create_update_router(
         db.refresh(item)
         return response_schema.model_validate(item)
 
-    update_item.__annotations__["item_id"] = str
+    update_item.__annotations__["item_id"] = Annotated[
+        str, Path(pattern=id_pattern)
+    ]
     update_item.__annotations__["payload"] = update_schema
     update_item.__name__ = f"update_{name_lower}"
 
@@ -227,7 +229,6 @@ def create_update_router(
         update_item,
         methods=["PUT"],
         response_model=response_schema,
-        status_code=HTTP_200_OK,
         responses={404: {"model": NotFoundError}},
         name=f"update_{name_lower}",
     )

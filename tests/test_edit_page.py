@@ -1,10 +1,12 @@
-"""Tests for edit page (edit.html) and app.js edit/link functionality.
+"""Tests for edit page (edit.html) structure and table row links.
 
 Covers:
   - edit.html static file exists and is served
   - edit.html structure matches spec (form, back link, error div, title)
-  - app.js contains initEditPage logic
   - Table rows link to the edit page (id column is clickable)
+
+Note: Behavioral tests for edit page logic (create → update → verify round-trip,
+XSS safety) are in test_edit_page_integration.py.
 """
 
 import pathlib
@@ -84,40 +86,6 @@ class TestEditHtmlContent:
     def test_links_app_js(self) -> None:
         """edit.html must include app.js."""
         assert "app.js" in self.html
-
-
-# ===================================================================
-# app.js — edit page logic
-# ===================================================================
-
-
-class TestAppJsEditLogic:
-    """Verify app.js contains edit page initialization logic."""
-
-    @pytest.fixture(autouse=True)
-    def _load_js(self) -> None:
-        self.js = _read_static("app.js")
-
-    def test_has_init_edit_page_function(self) -> None:
-        """app.js must define initEditPage."""
-        assert "initEditPage" in self.js
-
-    def test_detects_edit_form(self) -> None:
-        """app.js must detect the edit-form element to activate edit page logic."""
-        assert "edit-form" in self.js
-
-    def test_sends_put_request(self) -> None:
-        """app.js must send a PUT request for updating records."""
-        assert "PUT" in self.js
-
-    def test_fetches_record_by_id(self) -> None:
-        """app.js must fetch the individual record by ID."""
-        # The fetch should use the table + id pattern
-        assert "id" in self.js
-
-    def test_redirects_to_table_on_success(self) -> None:
-        """app.js must redirect to table.html on successful update."""
-        assert "table.html" in self.js
 
 
 # ===================================================================

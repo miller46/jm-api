@@ -153,18 +153,35 @@ function renderEditForm(table, id, fields, record) {
   var form = document.getElementById("edit-form");
   if (!form) return;
 
-  var html = "";
+  // Use DOM APIs instead of innerHTML to prevent XSS from record values
   for (var j = 0; j < fields.length; j++) {
     var field = fields[j];
     var currentVal = record[field];
-    var displayVal = currentVal !== null && currentVal !== undefined ? currentVal : "";
-    html += '<div class="form-group">';
-    html += '<label for="field-' + field + '">' + field + "</label>";
-    html += '<input type="text" id="field-' + field + '" name="' + field + '" value="' + displayVal + '">';
-    html += "</div>";
+    var displayVal = currentVal !== null && currentVal !== undefined ? String(currentVal) : "";
+
+    var group = document.createElement("div");
+    group.setAttribute("class", "form-group");
+
+    var label = document.createElement("label");
+    label.setAttribute("for", "field-" + field);
+    label.textContent = field;
+    group.appendChild(label);
+
+    var input = document.createElement("input");
+    input.setAttribute("type", "text");
+    input.setAttribute("id", "field-" + field);
+    input.setAttribute("name", field);
+    input.setAttribute("value", displayVal);
+    group.appendChild(input);
+
+    form.appendChild(group);
   }
-  html += '<button type="submit" class="btn btn-primary">Save</button>';
-  form.innerHTML = html;
+
+  var btn = document.createElement("button");
+  btn.setAttribute("type", "submit");
+  btn.setAttribute("class", "btn btn-primary");
+  btn.textContent = "Save";
+  form.appendChild(btn);
 
   form.addEventListener("submit", function (e) {
     e.preventDefault();
