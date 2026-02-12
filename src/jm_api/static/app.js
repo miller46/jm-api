@@ -8,7 +8,8 @@ var TableState = {
   originalItems: [],
   items: [],
   table: "",
-  hiddenColumns: {}
+  hiddenColumns: {},
+  filterFields: []
 };
 
 /**
@@ -23,6 +24,313 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/**
+ * Discover filterable fields from the OpenAPI spec for a given table.
+ * Fetches /openapi.json, extracts GET query parameters, excludes pagination
+ * params (page, per_page), and groups DATE_RANGE _after/_before pairs.
+ */
+function discoverFilterFields(spec, table) {
+  var pathKey = "/api/v1/" + table;
+  var pathObj = spec.paths && spec.paths[pathKey];
+  if (!pathObj || !pathObj.get) return [];
+
+  var parameters = pathObj.get.parameters || [];
+  var paginationParams = ["page", "per_page"];
+  var fields = [];
+  var dateRangeGroups = {};
+
+  for (var i = 0; i < parameters.length; i++) {
+    var param = parameters[i];
+    if (param.in !== "query") continue;
+    var name = param.name;
+
+    // Exclude pagination params
+    if (paginationParams.indexOf(name) !== -1) continue;
+
+    // Detect DATE_RANGE pairs by _after/_before suffixes
+    if (name.match(/_after$/)) {
+      var baseName = name.replace(/_after$/, "");
+      if (!dateRangeGroups[baseName]) {
+        dateRangeGroups[baseName] = { after: null, before: null };
+      }
+      dateRangeGroups[baseName].after = name;
+      continue;
+    }
+    if (name.match(/_before$/)) {
+      var baseName = name.replace(/_before$/, "");
+      if (!dateRangeGroups[baseName]) {
+        dateRangeGroups[baseName] = { after: null, before: null };
+      }
+      dateRangeGroups[baseName].before = name;
+      continue;
+    }
+
+    // Determine type from schema
+    var schema = param.schema || {};
+    var paramType = schema.type || "string";
+
+    // Check for boolean type (could be in anyOf for nullable booleans)
+    if (schema.anyOf) {
+      for (var k = 0; k < schema.anyOf.length; k++) {
+        if (schema.anyOf[k].type === "boolean") {
+          paramType = "boolean";
+          break;
+        }
+      }
+    }
+
+    fields.push({
+      name: name,
+      type: paramType,
+      kind: "single"
+    });
+  }
+
+  // Add grouped DATE_RANGE fields
+  for (var base in dateRangeGroups) {
+    if (dateRangeGroups.hasOwnProperty(base)) {
+      fields.push({
+        name: base,
+        type: "datetime",
+        kind: "date_range",
+        afterParam: dateRangeGroups[base].after || base + "_after",
+        beforeParam: dateRangeGroups[base].before || base + "_before"
+      });
+    }
+  }
+
+  return fields;
+}
+
+/**
+ * Render filter input controls into the filter panel based on discovered fields.
+ */
+function renderFilterPanel(filterFields) {
+  var container = document.getElementById("filter-inputs");
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  for (var i = 0; i < filterFields.length; i++) {
+    var field = filterFields[i];
+    var group = document.createElement("div");
+    group.className = "form-group";
+
+    if (field.kind === "date_range") {
+      // DATE_RANGE: two datetime-local inputs (After / Before)
+      var legend = document.createElement("label");
+      legend.textContent = field.name;
+      group.appendChild(legend);
+
+      var afterLabel = document.createElement("label");
+      afterLabel.textContent = "After";
+      afterLabel.style.fontWeight = "normal";
+      afterLabel.style.fontSize = "0.85rem";
+      var afterInput = document.createElement("input");
+      afterInput.type = "datetime-local";
+      afterInput.setAttribute("data-filter", field.afterParam);
+      afterInput.setAttribute("data-filter-kind", "date_range");
+      afterLabel.appendChild(afterInput);
+      group.appendChild(afterLabel);
+
+      var beforeLabel = document.createElement("label");
+      beforeLabel.textContent = "Before";
+      beforeLabel.style.fontWeight = "normal";
+      beforeLabel.style.fontSize = "0.85rem";
+      var beforeInput = document.createElement("input");
+      beforeInput.type = "datetime-local";
+      beforeInput.setAttribute("data-filter", field.beforeParam);
+      beforeInput.setAttribute("data-filter-kind", "date_range");
+      beforeLabel.appendChild(beforeInput);
+      group.appendChild(beforeLabel);
+
+    } else if (field.type === "boolean") {
+      // Boolean: <select> with Any / true / false
+      var label = document.createElement("label");
+      label.textContent = field.name;
+      group.appendChild(label);
+
+      var select = document.createElement("select");
+      select.setAttribute("data-filter", field.name);
+      select.setAttribute("data-filter-kind", "boolean");
+
+      var optAny = document.createElement("option");
+      optAny.value = "";
+      optAny.textContent = "Any";
+      select.appendChild(optAny);
+
+      var optTrue = document.createElement("option");
+      optTrue.value = "true";
+      optTrue.textContent = "true";
+      select.appendChild(optTrue);
+
+      var optFalse = document.createElement("option");
+      optFalse.value = "false";
+      optFalse.textContent = "false";
+      select.appendChild(optFalse);
+
+      group.appendChild(select);
+
+    } else {
+      // String/ILIKE: text input
+      var label = document.createElement("label");
+      label.textContent = field.name;
+      group.appendChild(label);
+
+      var input = document.createElement("input");
+      input.type = "text";
+      input.setAttribute("data-filter", field.name);
+      input.setAttribute("data-filter-kind", "text");
+      input.placeholder = "Filter by " + field.name;
+      group.appendChild(input);
+    }
+
+    container.appendChild(group);
+  }
+
+  // Add Apply Filters and Clear buttons
+  var btnGroup = document.createElement("div");
+  btnGroup.className = "filter-buttons";
+
+  var applyBtn = document.createElement("button");
+  applyBtn.type = "button";
+  applyBtn.className = "btn btn-primary";
+  applyBtn.textContent = "Apply Filters";
+  applyBtn.addEventListener("click", function () {
+    applyFilters();
+  });
+  btnGroup.appendChild(applyBtn);
+
+  var clearBtn = document.createElement("button");
+  clearBtn.type = "button";
+  clearBtn.className = "btn btn-secondary";
+  clearBtn.textContent = "Clear";
+  clearBtn.addEventListener("click", function () {
+    clearFilters();
+  });
+  btnGroup.appendChild(clearBtn);
+
+  container.appendChild(btnGroup);
+}
+
+/**
+ * Shared helper: fetch data from the API with the given params, update
+ * TableState, re-apply current sort (without toggling direction), and
+ * re-render the table.  Used by both applyFilters() and clearFilters()
+ * to avoid duplicating fetch → parse → sort → render logic.
+ */
+function fetchAndRender(params) {
+  var url = "/api/v1/" + TableState.table + "?" + params.toString();
+  var loadingEl = document.getElementById("loading");
+  if (loadingEl) loadingEl.style.display = "block";
+
+  fetch(url)
+    .then(function (response) {
+      if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+      }
+      return response.json();
+    })
+    .then(function (data) {
+      if (loadingEl) loadingEl.style.display = "none";
+
+      var items = data.items || [];
+      var headers = items.length > 0 ? Object.keys(items[0]) : TableState.headers;
+      TableState.headers = headers;
+      TableState.originalItems = items.slice();
+      TableState.items = items.slice();
+
+      if (items.length === 0) {
+        renderTable(TableState.headers, [], TableState.table);
+        return;
+      }
+
+      // Re-apply current sort without toggling direction
+      if (TableState.sortColumn) {
+        reapplySort();
+      } else {
+        renderTable(headers, TableState.items, TableState.table);
+      }
+    })
+    .catch(function (err) {
+      if (loadingEl) loadingEl.style.display = "none";
+      showError("Failed to load data: " + err.message);
+    });
+}
+
+/**
+ * Re-sort TableState.items using the current sortColumn and sortDirection
+ * without toggling the direction.  This preserves sort state when
+ * re-rendering after filter apply / clear.
+ */
+function reapplySort() {
+  var column = TableState.sortColumn;
+  var sorted = TableState.originalItems.slice().sort(function (a, b) {
+    var valA = a[column] !== null && a[column] !== undefined ? a[column] : "";
+    var valB = b[column] !== null && b[column] !== undefined ? b[column] : "";
+
+    if (typeof valA === "string") valA = valA.toLowerCase();
+    if (typeof valB === "string") valB = valB.toLowerCase();
+
+    if (valA < valB) return TableState.sortDirection === "asc" ? -1 : 1;
+    if (valA > valB) return TableState.sortDirection === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  TableState.items = sorted;
+  renderTable(TableState.headers, sorted, TableState.table);
+}
+
+/**
+ * Collect non-empty filter values and refetch data from the API.
+ */
+function applyFilters() {
+  var container = document.getElementById("filter-inputs");
+  if (!container) return;
+
+  var params = new URLSearchParams();
+  params.append("page", "1");
+  params.append("per_page", "20");
+
+  // Collect all filter inputs
+  var inputs = container.querySelectorAll("[data-filter]");
+  for (var i = 0; i < inputs.length; i++) {
+    var el = inputs[i];
+    var paramName = el.getAttribute("data-filter");
+    var val = el.value;
+    if (val !== "" && val !== null && val !== undefined) {
+      params.append(paramName, val);
+    }
+  }
+
+  fetchAndRender(params);
+}
+
+/**
+ * Reset all filter inputs to empty/default and refetch unfiltered data.
+ */
+function clearFilters() {
+  var container = document.getElementById("filter-inputs");
+  if (!container) return;
+
+  // Reset all filter inputs
+  var inputs = container.querySelectorAll("[data-filter]");
+  for (var i = 0; i < inputs.length; i++) {
+    var el = inputs[i];
+    if (el.tagName.toLowerCase() === "select") {
+      el.selectedIndex = 0;
+    } else {
+      el.value = "";
+    }
+  }
+
+  // Refetch unfiltered data
+  var params = new URLSearchParams();
+  params.append("page", "1");
+  params.append("per_page", "20");
+  fetchAndRender(params);
 }
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -59,14 +367,21 @@ function initTablePage() {
   const loadingEl = document.getElementById("loading");
   const errorEl = document.getElementById("error");
 
-  fetch(`/api/v1/${table}?per_page=20`)
-    .then(function (response) {
-      if (!response.ok) {
-        throw new Error("HTTP " + response.status);
-      }
-      return response.json();
+  // Fetch data and OpenAPI spec in parallel
+  Promise.all([
+    fetch("/api/v1/" + table + "?per_page=20").then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
+    }),
+    fetch("/openapi.json").then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.json();
     })
-    .then(function (data) {
+  ])
+    .then(function (results) {
+      var data = results[0];
+      var spec = results[1];
+
       if (loadingEl) loadingEl.style.display = "none";
 
       const items = data.items;
@@ -81,6 +396,11 @@ function initTablePage() {
       TableState.items = items.slice();
       renderColumnToggles(headers);
       renderTable(headers, TableState.items, table);
+
+      // Discover and render filter panel
+      var filterFields = discoverFilterFields(spec, table);
+      TableState.filterFields = filterFields;
+      renderFilterPanel(filterFields);
     })
     .catch(function (err) {
       if (loadingEl) loadingEl.style.display = "none";

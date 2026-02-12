@@ -159,6 +159,52 @@ tbody tr:hover {
   box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
 }
 
+/* Filter panel */
+#filter-toggle {
+  margin-bottom: 1rem;
+}
+
+#filter-toggle summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.5rem 0;
+}
+
+#filter-inputs {
+  padding: 0.5rem 0;
+}
+
+#filter-inputs .form-group {
+  margin-bottom: 0.75rem;
+}
+
+#filter-inputs select {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  box-sizing: border-box;
+}
+
+.filter-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.btn-secondary {
+  color: #333;
+  background: #e9ecef;
+  border-color: #dee2e6;
+}
+
+.btn-secondary:hover {
+  background: #dde0e3;
+  border-color: #cfd4d9;
+}
+
 /* Loading and error states */
 .loading {
   padding: 1rem;
