@@ -46,7 +46,7 @@ ul li a:hover {
 
 /* Table wrapper for horizontal scroll on small screens */
 .table-wrapper {
-  overflow-x: auto;
+  overflow: hidden;
   border-radius: 4px;
 }
 
@@ -56,7 +56,6 @@ table {
   border-collapse: collapse;
   border: 1px solid #dee2e6;
   background: #fff;
-  border-radius: 4px;
 }
 
 th, td {
@@ -90,6 +89,9 @@ tbody tr:hover {
   border-radius: 4px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
+}
+
+#add-record-btn {
   margin-bottom: 1.5rem;
 }
 

@@ -62,36 +62,46 @@ def _css_has_property(body: str, prop: str, value: str) -> bool:
 
 
 class TestButtonTableSpacing:
-    """The 'Add Record' button must have margin-bottom: 1.5rem so it
-    doesn't sit flush against the data table."""
+    """The 'Add Record' button must have margin-bottom: 1.5rem scoped
+    to #add-record-btn (not the generic .btn class)."""
 
     @pytest.fixture(autouse=True)
     def _load_files(self) -> None:
         self.css = _read_static("style.css")
         self.table_html = _read_static("table.html")
 
-    # -- Approach A: scoped via .action-bar wrapper --
-
-    def test_action_bar_wrapper_or_btn_margin(self) -> None:
-        """Either .action-bar wrapper in HTML with margin-bottom: 1.5rem in CSS,
-        or .btn itself must have margin-bottom: 1.5rem."""
-        has_action_bar_html = "action-bar" in self.table_html
-        has_action_bar_css = any(
+    def test_add_record_btn_has_margin_bottom(self) -> None:
+        """#add-record-btn must have margin-bottom: 1.5rem."""
+        btn_blocks = _find_blocks(self.css, "#add-record-btn")
+        has_margin = any(
             _css_has_property(body, "margin-bottom", "1.5rem")
-            for body in _find_blocks(self.css, "action-bar")
+            for body in btn_blocks
         )
-
-        has_btn_margin = any(
-            _css_has_property(body, "margin-bottom", "1.5rem")
-            for body in _find_blocks(self.css, ".btn")
-        )
-
-        action_bar_approach = has_action_bar_html and has_action_bar_css
-        btn_approach = has_btn_margin
-
-        assert action_bar_approach or btn_approach, (
-            "Expected margin-bottom: 1.5rem on .action-bar wrapper or .btn "
+        assert has_margin, (
+            "Expected margin-bottom: 1.5rem on #add-record-btn "
             "to add spacing between the Add Record button and the table"
+        )
+
+    def test_generic_btn_no_margin_bottom(self) -> None:
+        """The generic .btn class must NOT have margin-bottom.
+
+        margin-bottom on .btn is too broad — it affects all buttons including
+        the submit button on create.html. The spacing should be scoped to
+        #add-record-btn only.
+        """
+        # Find blocks where selector is exactly ".btn" (not .btn-primary, etc.)
+        exact_btn_blocks = [
+            body
+            for sel, body in _css_blocks(self.css)
+            if re.fullmatch(r"\.btn", sel.strip())
+        ]
+        has_margin = any(
+            _css_has_property(body, "margin-bottom", "1.5rem")
+            for body in exact_btn_blocks
+        )
+        assert not has_margin, (
+            "The generic .btn class should NOT have margin-bottom: 1.5rem; "
+            "scope it to #add-record-btn instead"
         )
 
     def test_margin_bottom_value_is_1_5rem(self) -> None:
@@ -107,16 +117,20 @@ class TestButtonTableSpacing:
 
 
 class TestTableBorderRadius:
-    """table and .table-wrapper must have border-radius: 4px."""
+    """Rounded corners on the data table must be achieved via .table-wrapper
+    (with overflow: hidden) — not on table itself (border-collapse: collapse
+    causes border-radius to be silently ignored)."""
 
     @pytest.fixture(autouse=True)
     def _load_css(self) -> None:
         self.css = _read_static("style.css")
 
-    def test_table_has_border_radius(self) -> None:
-        """The 'table' selector must include border-radius: 4px."""
-        table_blocks = _find_blocks(self.css, "table")
-        # Filter to blocks where selector is exactly "table" (not .table-wrapper, etc.)
+    def test_table_no_border_radius(self) -> None:
+        """The 'table' selector must NOT include border-radius.
+
+        border-radius has no visible effect when border-collapse: collapse is
+        set. It's dead CSS that gives a false sense of polish.
+        """
         exact_table_blocks = [
             body
             for sel, body in _css_blocks(self.css)
@@ -126,8 +140,9 @@ class TestTableBorderRadius:
             _css_has_property(body, "border-radius", "4px")
             for body in exact_table_blocks
         )
-        assert has_radius, (
-            "Expected border-radius: 4px in the 'table' CSS rule"
+        assert not has_radius, (
+            "border-radius: 4px on 'table' is dead code when "
+            "border-collapse: collapse is set — remove it"
         )
 
     def test_table_wrapper_has_border_radius(self) -> None:
@@ -139,6 +154,18 @@ class TestTableBorderRadius:
         )
         assert has_radius, (
             "Expected border-radius: 4px in the '.table-wrapper' CSS rule"
+        )
+
+    def test_table_wrapper_has_overflow_hidden(self) -> None:
+        """The '.table-wrapper' must have overflow: hidden to clip the table
+        corners to the wrapper's border-radius."""
+        wrapper_blocks = _find_blocks(self.css, ".table-wrapper")
+        has_overflow = any(
+            _css_has_property(body, "overflow", "hidden")
+            for body in wrapper_blocks
+        )
+        assert has_overflow, (
+            "Expected overflow: hidden on '.table-wrapper' to clip corners"
         )
 
 
@@ -275,9 +302,9 @@ class TestExistingStylesPreserved:
         """nth-child alternating row styles must still exist."""
         assert "nth-child" in self.css_lower
 
-    def test_overflow_x_preserved(self) -> None:
-        """Horizontal scroll overflow must still exist."""
-        assert "overflow-x" in self.css_lower
+    def test_overflow_preserved(self) -> None:
+        """Overflow handling on .table-wrapper must still exist."""
+        assert "overflow" in self.css_lower
 
     def test_btn_primary_preserved(self) -> None:
         """.btn-primary styles must still exist."""
