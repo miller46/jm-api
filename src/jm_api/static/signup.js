@@ -30,9 +30,10 @@
 
   /**
    * Check if user is already authenticated and redirect if so
+   * Checks both localStorage and sessionStorage for auth tokens
    */
   function checkAuth() {
-    const token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token');
     if (token) {
       // Verify token is valid by calling /me endpoint
       fetch('/api/v1/auth/me', {
@@ -45,13 +46,15 @@
           // User is authenticated, redirect to dashboard
           window.location.href = '/admin/';
         } else {
-          // Token is invalid, clear it
+          // Token is invalid, clear it from both storages
           localStorage.removeItem('access_token');
+          sessionStorage.removeItem('access_token');
         }
       })
       .catch(function() {
-        // Error checking auth, clear token
+        // Error checking auth, clear token from both storages
         localStorage.removeItem('access_token');
+        sessionStorage.removeItem('access_token');
       });
     }
   }
