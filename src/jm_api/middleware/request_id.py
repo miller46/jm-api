@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import time
 from uuid import uuid4
 
+import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+
+logger = structlog.get_logger(__name__)
 
 
 class RequestIdMiddleware(BaseHTTPMiddleware):
@@ -18,6 +22,30 @@ class RequestIdMiddleware(BaseHTTPMiddleware):
             request_id = str(uuid4())
 
         request.state.request_id = request_id
-        response = await call_next(request)
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(
+            request_id=request_id,
+            method=request.method,
+            path=request.url.path,
+        )
+
+        start_time = time.perf_counter()
+        logger.info("request.started")
+
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            logger.exception("request.failed", duration_ms=duration_ms)
+            structlog.contextvars.clear_contextvars()
+            raise
+
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
         response.headers[self.header_name] = request_id
+        logger.info(
+            "request.completed",
+            status_code=response.status_code,
+            duration_ms=duration_ms,
+        )
+        structlog.contextvars.clear_contextvars()
         return response

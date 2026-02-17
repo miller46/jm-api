@@ -78,3 +78,11 @@ class TestEnvironmentDefaults:
         """Debug defaults to False."""
         settings = Settings(database_url="sqlite:///:memory:")
         assert settings.debug is False
+
+    def test_warn_log_level_normalizes_to_warning(self) -> None:
+        settings = Settings(database_url="sqlite:///:memory:", log_level="WARN")
+        assert settings.log_level == "WARNING"
+
+    def test_invalid_log_sample_rate_raises(self) -> None:
+        with pytest.raises(ValueError, match="log_sample_rate"):
+            Settings(database_url="sqlite:///:memory:", log_sample_rate=0)

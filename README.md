@@ -67,6 +67,19 @@ All routes are prefixed with `/api/v1` by default.
 uv run pytest
 ```
 
+## Observability
+
+Advanced observability is built-in:
+
+- Structured JSON logging with request correlation IDs
+- Request/response logging middleware
+- OpenTelemetry tracing with Jaeger exporter
+- Prometheus metrics endpoint (`/metrics`)
+- DB query timing logs + slow query detection (`>500ms` default)
+- Auth event logging for login/refresh/logout
+
+See `docs/observability.md` for local Prometheus + Grafana + Jaeger setup.
+
 ## Configuration
 
 Environment variables are prefixed with `JM_API_` and can be loaded from `.env`.

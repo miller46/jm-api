@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+import structlog
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
@@ -13,7 +14,6 @@ from jm_api.api.deps import (
     create_refresh_token,
     decode_token,
     get_current_user,
-    hash_password,
     is_refresh_token_revoked,
     revoke_refresh_token,
     verify_password,
@@ -27,6 +27,7 @@ from jm_api.schemas.auth import LoginRequest, TokenResponse, UserResponse
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+logger = structlog.get_logger(__name__)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -48,6 +49,12 @@ def login(
 
     # Verify user exists and password is correct
     if user is None or not verify_password(login_data.password, user.password_hash):
+        logger.warning(
+            "auth.login.failed",
+            email=login_data.email,
+            reason="invalid_credentials",
+            request_id=getattr(request.state, "request_id", None),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -55,6 +62,12 @@ def login(
         )
 
     if not user.is_active:
+        logger.warning(
+            "auth.login.failed",
+            email=login_data.email,
+            reason="user_inactive",
+            request_id=getattr(request.state, "request_id", None),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User account is deactivated",
@@ -67,6 +80,12 @@ def login(
 
     # Set refresh token in httpOnly cookie
     settings = get_settings()
+    logger.info(
+        "auth.login.success",
+        user_id=user.id,
+        email=user.email,
+        request_id=getattr(request.state, "request_id", None),
+    )
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
@@ -86,6 +105,7 @@ def login(
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_token(
+    request: Request,
     response: Response,
     refresh_token_cookie: str | None = Cookie(None, alias="refresh_token"),
     db: Session = Depends(get_db),
@@ -94,6 +114,11 @@ def refresh_token(
     token = refresh_token_cookie
 
     if token is None:
+        logger.warning(
+            "auth.refresh.failed",
+            reason="missing_refresh_cookie",
+            request_id=getattr(request.state, "request_id", None),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token required",
@@ -101,6 +126,11 @@ def refresh_token(
         )
 
     if is_refresh_token_revoked(token):
+        logger.warning(
+            "auth.refresh.failed",
+            reason="refresh_token_revoked",
+            request_id=getattr(request.state, "request_id", None),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token has been revoked",
@@ -151,6 +181,12 @@ def refresh_token(
         max_age=settings.jwt_refresh_token_expire_days * 24 * 60 * 60,
     )
 
+    logger.info(
+        "auth.refresh.success",
+        user_id=user.id,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
     return TokenResponse(
         access_token=new_access_token,
         refresh_token=new_refresh_token,
@@ -161,12 +197,19 @@ def refresh_token(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(
+    request: Request,
     response: Response,
     refresh_token_cookie: str | None = Cookie(None, alias="refresh_token"),
 ) -> None:
     """Logout user by revoking refresh token and clearing the refresh-token cookie."""
     if refresh_token_cookie is not None:
         revoke_refresh_token(refresh_token_cookie)
+
+    logger.info(
+        "auth.logout",
+        had_refresh_cookie=refresh_token_cookie is not None,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
     response.delete_cookie(key="refresh_token")
     return None

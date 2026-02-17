@@ -54,6 +54,18 @@ class Settings(BaseSettings):
     allowed_hosts: list[str] = Field(default_factory=list)
 
     log_level: str = Field(default="INFO")
+    log_json: bool = Field(default=True)
+    log_sample_rate: float = Field(default=1.0)
+    slow_query_threshold_ms: int = Field(default=500)
+
+    tracing_enabled: bool = Field(default=False)
+    tracing_service_name: str = Field(default="jm-api")
+    tracing_service_version: str = Field(default="0.1.0")
+    tracing_jaeger_host: str = Field(default="localhost")
+    tracing_jaeger_port: int = Field(default=6831)
+
+    metrics_enabled: bool = Field(default=True)
+    metrics_path: str = Field(default="/metrics")
 
     # JWT Settings
     jwt_secret_key: str = Field(default=_DEFAULT_JWT_SECRET)
@@ -74,6 +86,23 @@ class Settings(BaseSettings):
             if not value.strip():
                 return []
             return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def normalize_log_level(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip().upper()
+        if normalized == "WARN":
+            return "WARNING"
+        return normalized
+
+    @field_validator("log_sample_rate")
+    @classmethod
+    def validate_sample_rate(cls, value: float) -> float:
+        if not 0 < value <= 1:
+            raise ValueError("log_sample_rate must be > 0 and <= 1")
         return value
 
 
