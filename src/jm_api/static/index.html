@@ -7,12 +7,20 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <main>
+  <header class="auth-header">
     <h1>Admin Dashboard</h1>
+    <div class="auth-controls">
+      <span class="user-email" id="user-email"></span>
+      <button class="btn-logout" id="logout-btn">Logout</button>
+    </div>
+  </header>
+  
+  <main id="dashboard-page">
     <ul id="table-list">
       <li><a href="table.html?table=bots">bots</a></li>
     </ul>
   </main>
+  
   <script src="app.js"></script>
 </body>
 </html>

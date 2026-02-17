@@ -1,6 +1,275 @@
 const TABLES = ["bots"];
 
-// Encapsulated table page state — avoids fragile module-level mutable globals
+// ============ AUTH MODULE ============
+var Auth = {
+  accessToken: null,
+  tokenExpiry: null,
+  refreshPromise: null,
+  user: null,
+
+  // Initialize auth state from storage
+  init: function() {
+    var storage = this.getStorage();
+    this.accessToken = storage.getItem('access_token');
+    var expiryStr = storage.getItem('token_expiry');
+    this.tokenExpiry = expiryStr ? parseInt(expiryStr, 10) : null;
+  },
+
+  // Get appropriate storage based on remember me preference
+  getStorage: function() {
+    var useLocal = localStorage.getItem('remember_me') === 'true';
+    return useLocal ? localStorage : sessionStorage;
+  },
+
+  // Get safe redirect URL from query params - prevents open redirect attacks
+  getSafeRedirectUrl: function() {
+    var params = new URLSearchParams(window.location.search);
+    var redirectTo = params.get('redirect');
+    
+    if (!redirectTo) {
+      return 'index.html';
+    }
+    
+    // Decode the redirect parameter
+    var decodedRedirect = decodeURIComponent(redirectTo);
+    
+    // Only allow same-origin relative paths (start with /)
+    // or known safe paths within the app
+    if (decodedRedirect.charAt(0) === '/') {
+      // Absolute path - ensure it's to a known HTML file or root
+      var pathWithoutQuery = decodedRedirect.split('?')[0];
+      // Allow paths that end with .html or are root /
+      if (pathWithoutQuery.endsWith('.html') || pathWithoutQuery === '/') {
+        return decodedRedirect.substring(1) || 'index.html'; // Remove leading /
+      }
+    } else if (decodedRedirect.indexOf('://') === -1 && decodedRedirect.indexOf('//') !== 0) {
+      // Relative path without protocol - check against allowlist
+      var cleanPath = decodedRedirect.split('?')[0];
+      // Allow .html files in the same directory
+      if (cleanPath.endsWith('.html') && cleanPath.indexOf('/') === -1) {
+        return decodedRedirect;
+      }
+    }
+    
+    // Default fallback for unsafe redirects
+    return 'index.html';
+  },
+
+  // Redirect after successful login (with safe redirect handling)
+  redirectAfterLogin: function() {
+    var redirectTo = this.getSafeRedirectUrl();
+    window.location.href = redirectTo;
+  },
+
+  // Login API call
+  login: function(email, password, rememberMe) {
+    var body = {
+      email: email,
+      password: password
+    };
+
+    if (rememberMe) {
+      body.remember_me = true;
+    }
+
+    return fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    })
+    .then(function(response) {
+      if (!response.ok) {
+        return response.json().then(function(err) {
+          throw new Error(err.detail || 'Login failed');
+        }).catch(function(e) {
+          if (e.message === 'Login failed') {
+            throw e;
+          }
+          throw new Error('Login failed. Please check your credentials.');
+        });
+      }
+      return response.json();
+    });
+  },
+
+  // Store tokens securely
+  storeTokens: function(response, rememberMe) {
+    this.accessToken = response.access_token;
+    this.tokenExpiry = Date.now() + (response.expires_in * 1000);
+
+    var storage = rememberMe ? localStorage : sessionStorage;
+    storage.setItem('access_token', this.accessToken);
+    storage.setItem('token_expiry', this.tokenExpiry.toString());
+    storage.setItem('remember_me', rememberMe ? 'true' : 'false');
+  },
+
+  // Check if user is authenticated
+  isAuthenticated: function() {
+    return !!this.accessToken;
+  },
+
+  // Check if token is expired or about to expire (within 5 minutes)
+  isTokenExpired: function() {
+    if (!this.tokenExpiry) return true;
+    return Date.now() >= (this.tokenExpiry - 5 * 60 * 1000);
+  },
+
+  // Get valid access token, refreshing if necessary
+  getAccessToken: function() {
+    var self = this;
+    
+    if (!this.accessToken) {
+      return Promise.resolve(null);
+    }
+
+    if (!this.isTokenExpired()) {
+      return Promise.resolve(this.accessToken);
+    }
+
+    // Token expired, need to refresh
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.refreshPromise = this.refreshToken().then(function(token) {
+      self.refreshPromise = null;
+      return token;
+    }).catch(function(err) {
+      self.refreshPromise = null;
+      self.logout();
+      return Promise.reject(err);
+    });
+
+    return this.refreshPromise;
+  },
+
+  // Refresh access token using httpOnly cookie
+  refreshToken: function() {
+    var self = this;
+    
+    return fetch('/api/v1/auth/refresh', {
+      method: 'POST',
+      credentials: 'same-origin'
+    })
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('Refresh failed');
+      }
+      return response.json();
+    })
+    .then(function(data) {
+      self.accessToken = data.access_token;
+      self.tokenExpiry = Date.now() + (data.expires_in * 1000);
+      
+      var storage = self.getStorage();
+      storage.setItem('access_token', self.accessToken);
+      storage.setItem('token_expiry', self.tokenExpiry.toString());
+      
+      return self.accessToken;
+    });
+  },
+
+  // Fetch with automatic auth header and token refresh
+  fetchWithAuth: function(url, options) {
+    var self = this;
+    options = options || {};
+    
+    return this.getAccessToken().then(function(token) {
+      if (!token) {
+        return Promise.reject(new Error('Not authenticated'));
+      }
+      
+      options.headers = options.headers || {};
+      options.headers['Authorization'] = 'Bearer ' + token;
+      
+      return fetch(url, options);
+    }).then(function(response) {
+      // Handle 401 by attempting refresh once
+      if (response.status === 401) {
+        // Force a refresh by clearing token and calling refreshToken directly
+        self.accessToken = null;
+        return self.refreshToken().then(function(newToken) {
+          options.headers['Authorization'] = 'Bearer ' + newToken;
+          return fetch(url, options);
+        }).catch(function(err) {
+          self.logout();
+          return Promise.reject(new Error('Not authenticated'));
+        });
+      }
+      return response;
+    });
+  },
+
+  // Get current user info
+  getCurrentUser: function() {
+    var self = this;
+    
+    if (this.user) {
+      return Promise.resolve(this.user);
+    }
+    
+    return this.fetchWithAuth('/api/v1/auth/me')
+      .then(function(response) {
+        if (!response.ok) {
+          throw new Error('Failed to get user info');
+        }
+        return response.json();
+      })
+      .then(function(user) {
+        self.user = user;
+        return user;
+      });
+  },
+
+  // Logout and clear storage
+  logout: function() {
+    var self = this;
+    
+    // Call logout endpoint to revoke refresh token
+    fetch('/api/v1/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin'
+    }).finally(function() {
+      // Clear local state regardless of server response
+      self.accessToken = null;
+      self.tokenExpiry = null;
+      self.user = null;
+      
+      // Clear all storage
+      sessionStorage.removeItem('access_token');
+      sessionStorage.removeItem('token_expiry');
+      sessionStorage.removeItem('remember_me');
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('token_expiry');
+      localStorage.removeItem('remember_me');
+      
+      // Redirect to login
+      var currentPath = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = 'login.html?redirect=' + currentPath;
+    });
+  },
+
+  // Require authentication - redirect to login if not authenticated
+  requireAuth: function() {
+    var self = this;
+    
+    return this.getAccessToken().then(function(token) {
+      if (!token) {
+        var currentPath = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = 'login.html?redirect=' + currentPath;
+        return Promise.reject(new Error('Authentication required'));
+      }
+      return token;
+    });
+  }
+};
+
+// Initialize auth on load
+Auth.init();
+
+// ============ TABLE STATE ============
 var TableState = {
   sortColumn: null,
   sortDirection: null,
@@ -218,15 +487,14 @@ function renderFilterPanel(filterFields) {
 /**
  * Shared helper: fetch data from the API with the given params, update
  * TableState, re-apply current sort (without toggling direction), and
- * re-render the table.  Used by both applyFilters() and clearFilters()
- * to avoid duplicating fetch → parse → sort → render logic.
+ * re-render the table. Uses authenticated fetch.
  */
 function fetchAndRender(params) {
   var url = "/api/v1/" + TableState.table + "?" + params.toString();
   var loadingEl = document.getElementById("loading");
   if (loadingEl) loadingEl.style.display = "block";
 
-  fetch(url)
+  Auth.fetchWithAuth(url)
     .then(function (response) {
       if (!response.ok) {
         throw new Error("HTTP " + response.status);
@@ -334,14 +602,33 @@ function clearFilters() {
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-  // Detect which page we're on
-  if (document.getElementById("data-table")) {
-    initTablePage();
-  } else if (document.getElementById("edit-form")) {
-    initEditPage();
-  } else if (document.getElementById("create-form")) {
-    initCreatePage();
+  // Don't require auth on login or signup pages
+  if (document.getElementById("login-form") || document.getElementById("signup-form")) {
+    // Initialize login page if needed
+    if (document.getElementById("login-form")) {
+      initLoginPage();
+    }
+    return;
   }
+  
+  // Require auth for all other pages, then dispatch to appropriate init
+  Auth.requireAuth().then(function() {
+    // Initialize common auth header elements
+    initAuthHeader();
+    
+    // Detect which page we're on and call appropriate init function
+    if (document.getElementById("data-table")) {
+      initTablePage();
+    } else if (document.getElementById("edit-form")) {
+      initEditPage();
+    } else if (document.getElementById("create-form")) {
+      initCreatePage();
+    } else if (document.getElementById("dashboard-page")) {
+      initDashboardPage();
+    }
+  }).catch(function() {
+    // Redirect handled by requireAuth
+  });
 });
 
 function initTablePage() {
@@ -367,13 +654,13 @@ function initTablePage() {
   const loadingEl = document.getElementById("loading");
   const errorEl = document.getElementById("error");
 
-  // Fetch data and OpenAPI spec in parallel
+  // Fetch data and OpenAPI spec in parallel using authenticated requests
   Promise.all([
-    fetch("/api/v1/" + table + "?per_page=20").then(function (r) {
+    Auth.fetchWithAuth("/api/v1/" + table + "?per_page=20").then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     }),
-    fetch("/openapi.json").then(function (r) {
+    Auth.fetchWithAuth("/openapi.json").then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     })
@@ -538,6 +825,171 @@ function showError(message) {
   }
 }
 
+// ============ SHARED PAGE INITIALIZATION ============
+
+/**
+ * Initialize common auth header elements (user email display and logout button).
+ * Call this from any page that has #user-email and #logout-btn elements.
+ */
+function initAuthHeader() {
+  // Setup logout button
+  var logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', function() {
+      Auth.logout();
+    });
+  }
+
+  // Load and display user info
+  Auth.getCurrentUser().then(function(user) {
+    var emailEl = document.getElementById('user-email');
+    if (emailEl && user) {
+      emailEl.textContent = user.email;
+    }
+  }).catch(function() {
+    // User fetch failed, will be redirected by requireAuth if needed
+  });
+}
+
+/**
+ * Dashboard page initialization
+ */
+function initDashboardPage() {
+  // Auth header already initialized by caller (Auth.requireAuth().then())
+  // Page-specific initialization can go here
+}
+
+/**
+ * Login page initialization
+ */
+function initLoginPage() {
+  // DOM elements
+  var loginForm = document.getElementById('login-form');
+  var emailInput = document.getElementById('email');
+  var passwordInput = document.getElementById('password');
+  var rememberMeCheckbox = document.getElementById('remember-me');
+  var errorEl = document.getElementById('error');
+  var loginBtn = document.getElementById('login-btn');
+  var btnText = loginBtn ? loginBtn.querySelector('.btn-text') : null;
+  var btnSpinner = loginBtn ? loginBtn.querySelector('.btn-spinner') : null;
+
+  // Redirect if already authenticated
+  checkAuthStatus().then(function(authenticated) {
+    if (authenticated) {
+      Auth.redirectAfterLogin();
+    }
+  });
+
+  // Form submission handler
+  if (loginForm) {
+    loginForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+      clearError();
+
+      var email = emailInput ? emailInput.value.trim() : '';
+      var password = passwordInput ? passwordInput.value : '';
+      var rememberMe = rememberMeCheckbox ? rememberMeCheckbox.checked : false;
+
+      // Client-side validation
+      if (!validateEmail(email)) {
+        showLoginError('Please enter a valid email address');
+        if (emailInput) emailInput.focus();
+        return;
+      }
+
+      if (password.length < 1) {
+        showLoginError('Password is required');
+        if (passwordInput) passwordInput.focus();
+        return;
+      }
+
+      // Set loading state
+      setLoading(true);
+
+      // Call login API
+      Auth.login(email, password, rememberMe)
+        .then(function(response) {
+          setLoading(false);
+          Auth.storeTokens(response, rememberMe);
+          Auth.redirectAfterLogin();
+        })
+        .catch(function(err) {
+          setLoading(false);
+          handleLoginError(err);
+        });
+    });
+  }
+
+  // Check if user is already authenticated
+  function checkAuthStatus() {
+    var storedToken = sessionStorage.getItem('access_token') || localStorage.getItem('access_token');
+    if (!storedToken) {
+      return Promise.resolve(false);
+    }
+
+    return fetch('/api/v1/auth/me', {
+      headers: {
+        'Authorization': 'Bearer ' + storedToken
+      }
+    })
+    .then(function(response) {
+      return response.ok;
+    })
+    .catch(function() {
+      return false;
+    });
+  }
+
+  // Show error message
+  function showLoginError(message) {
+    if (errorEl) {
+      errorEl.textContent = message;
+      errorEl.style.display = 'block';
+    }
+  }
+
+  // Clear error message
+  function clearError() {
+    if (errorEl) {
+      errorEl.textContent = '';
+      errorEl.style.display = 'none';
+    }
+  }
+
+  // Set loading state
+  function setLoading(loading) {
+    if (loginBtn) {
+      loginBtn.disabled = loading;
+    }
+    if (btnText) {
+      btnText.style.display = loading ? 'none' : 'inline';
+    }
+    if (btnSpinner) {
+      btnSpinner.style.display = loading ? 'inline-block' : 'none';
+    }
+  }
+
+  // Handle login errors
+  function handleLoginError(err) {
+    var message = err.message || 'An error occurred during login';
+
+    // Handle specific error cases
+    if (message.toLowerCase().includes('invalid')) {
+      showLoginError('Invalid email or password. Please try again.');
+    } else if (err.message === 'Failed to fetch') {
+      showLoginError('Network error. Please check your connection and try again.');
+    } else {
+      showLoginError(message);
+    }
+  }
+
+  // Validate email format
+  function validateEmail(email) {
+    var re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
+  }
+}
+
 function initEditPage() {
   var params = new URLSearchParams(location.search);
   var table = params.get("table");
@@ -559,13 +1011,13 @@ function initEditPage() {
     backLink.href = "table.html?table=" + encodeURIComponent(table);
   }
 
-  // Fetch the existing record and field schema, then render form
+  // Fetch the existing record and field schema using authenticated requests
   Promise.all([
-    fetch("/api/v1/" + table + "/" + id).then(function (r) {
+    Auth.fetchWithAuth("/api/v1/" + table + "/" + id).then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     }),
-    fetch("/openapi.json").then(function (r) {
+    Auth.fetchWithAuth("/openapi.json").then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     }),
@@ -625,7 +1077,7 @@ function renderEditForm(table, id, fields, record) {
   deleteBtn.textContent = "Delete";
   deleteBtn.addEventListener("click", function () {
     if (confirm("Are you sure you want to delete this record?")) {
-      fetch("/api/v1/" + table + "/" + id, { method: "DELETE" })
+      Auth.fetchWithAuth("/api/v1/" + table + "/" + id, { method: "DELETE" })
         .then(function (response) {
           if (!response.ok) {
             return response.json().then(function (err) {
@@ -668,7 +1120,7 @@ function submitEditForm(table, id, fields) {
     }
   }
 
-  fetch("/api/v1/" + table + "/" + id, {
+  Auth.fetchWithAuth("/api/v1/" + table + "/" + id, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -701,9 +1153,8 @@ function initCreatePage() {
     titleEl.textContent = "Create " + table + " Record";
   }
 
-  // Discover create-schema fields from the OpenAPI spec.
-  // This avoids hardcoding auto-fields and works even when the table is empty.
-  fetch("/openapi.json")
+  // Discover create-schema fields from the OpenAPI spec using authenticated fetch
+  Auth.fetchWithAuth("/openapi.json")
     .then(function (response) {
       if (!response.ok) {
         throw new Error("HTTP " + response.status);
@@ -807,7 +1258,7 @@ function submitCreateForm(table, fields) {
     }
   }
 
-  fetch("/api/v1/" + table, {
+  Auth.fetchWithAuth("/api/v1/" + table, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
