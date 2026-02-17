@@ -22,27 +22,5 @@
   </main>
   
   <script src="app.js"></script>
-  <script>
-    // Dashboard-specific initialization
-    function initDashboardPage() {
-      // Load and display user info
-      Auth.getCurrentUser().then(function(user) {
-        var emailEl = document.getElementById('user-email');
-        if (emailEl && user) {
-          emailEl.textContent = user.email;
-        }
-      }).catch(function() {
-        // User fetch failed, will be redirected by requireAuth
-      });
-      
-      // Setup logout button
-      var logoutBtn = document.getElementById('logout-btn');
-      if (logoutBtn) {
-        logoutBtn.addEventListener('click', function() {
-          Auth.logout();
-        });
-      }
-    }
-  </script>
 </body>
 </html>

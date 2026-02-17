@@ -6,6 +6,7 @@ var Auth = {
   tokenExpiry: null,
   refreshPromise: null,
   user: null,
+  allowedRedirectPaths: ['/index.html', '/table.html', '/create.html', '/edit.html'],
 
   // Initialize auth state from storage
   init: function() {
@@ -19,6 +20,90 @@ var Auth = {
   getStorage: function() {
     var useLocal = localStorage.getItem('remember_me') === 'true';
     return useLocal ? localStorage : sessionStorage;
+  },
+
+  // Get safe redirect URL from query params - prevents open redirect attacks
+  getSafeRedirectUrl: function() {
+    var params = new URLSearchParams(window.location.search);
+    var redirectTo = params.get('redirect');
+    
+    if (!redirectTo) {
+      return 'index.html';
+    }
+    
+    // Decode the redirect parameter
+    var decodedRedirect = decodeURIComponent(redirectTo);
+    
+    // Only allow same-origin relative paths (start with /)
+    // or known safe paths within the app
+    if (decodedRedirect.charAt(0) === '/') {
+      // Absolute path - ensure it's to a known HTML file or root
+      var pathWithoutQuery = decodedRedirect.split('?')[0];
+      // Allow paths that end with .html or are root /
+      if (pathWithoutQuery.endsWith('.html') || pathWithoutQuery === '/') {
+        return decodedRedirect.substring(1) || 'index.html'; // Remove leading /
+      }
+    } else if (decodedRedirect.indexOf('://') === -1 && decodedRedirect.indexOf('//') !== 0) {
+      // Relative path without protocol - check against allowlist
+      var cleanPath = decodedRedirect.split('?')[0];
+      // Allow .html files in the same directory
+      if (cleanPath.endsWith('.html') && cleanPath.indexOf('/') === -1) {
+        return decodedRedirect;
+      }
+    }
+    
+    // Default fallback for unsafe redirects
+    return 'index.html';
+  },
+
+  // Redirect after successful login (with safe redirect handling)
+  redirectAfterLogin: function() {
+    var redirectTo = this.getSafeRedirectUrl();
+    window.location.href = redirectTo;
+  },
+
+  // Login API call
+  login: function(email, password, rememberMe) {
+    var body = {
+      email: email,
+      password: password
+    };
+
+    if (rememberMe) {
+      body.remember_me = true;
+    }
+
+    return fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    })
+    .then(function(response) {
+      if (!response.ok) {
+        return response.json().then(function(err) {
+          throw new Error(err.detail || 'Login failed');
+        }).catch(function(e) {
+          if (e.message === 'Login failed') {
+            throw e;
+          }
+          throw new Error('Login failed. Please check your credentials.');
+        });
+      }
+      return response.json();
+    });
+  },
+
+  // Store tokens securely
+  storeTokens: function(response, rememberMe) {
+    this.accessToken = response.access_token;
+    this.tokenExpiry = Date.now() + (response.expires_in * 1000);
+
+    var storage = rememberMe ? localStorage : sessionStorage;
+    storage.setItem('access_token', this.accessToken);
+    storage.setItem('token_expiry', this.tokenExpiry.toString());
+    storage.setItem('remember_me', rememberMe ? 'true' : 'false');
   },
 
   // Check if user is authenticated
@@ -102,10 +187,14 @@ var Auth = {
       
       return fetch(url, options);
     }).then(function(response) {
-      // Handle 401 by attempting refresh once
+      // Handle 401 by attempting refresh once (using refreshPromise for deduplication)
       if (response.status === 401) {
         self.accessToken = null;
-        return self.refreshToken().then(function(newToken) {
+        // Use getAccessToken which handles refreshPromise deduplication
+        return self.getAccessToken().then(function(newToken) {
+          if (!newToken) {
+            return Promise.reject(new Error('Not authenticated'));
+          }
           options.headers['Authorization'] = 'Bearer ' + newToken;
           return fetch(url, options);
         });
@@ -516,11 +605,18 @@ function clearFilters() {
 document.addEventListener("DOMContentLoaded", function () {
   // Don't require auth on login or signup pages
   if (document.getElementById("login-form") || document.getElementById("signup-form")) {
+    // Initialize login page if needed
+    if (document.getElementById("login-form")) {
+      initLoginPage();
+    }
     return;
   }
   
   // Require auth for all other pages, then dispatch to appropriate init
   Auth.requireAuth().then(function() {
+    // Initialize common auth header elements
+    initAuthHeader();
+    
     // Detect which page we're on and call appropriate init function
     if (document.getElementById("data-table")) {
       initTablePage();
@@ -727,6 +823,171 @@ function showError(message) {
   var loadingEl = document.getElementById("loading");
   if (loadingEl) {
     loadingEl.style.display = "none";
+  }
+}
+
+// ============ SHARED PAGE INITIALIZATION ============
+
+/**
+ * Initialize common auth header elements (user email display and logout button).
+ * Call this from any page that has #user-email and #logout-btn elements.
+ */
+function initAuthHeader() {
+  // Setup logout button
+  var logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', function() {
+      Auth.logout();
+    });
+  }
+
+  // Load and display user info
+  Auth.getCurrentUser().then(function(user) {
+    var emailEl = document.getElementById('user-email');
+    if (emailEl && user) {
+      emailEl.textContent = user.email;
+    }
+  }).catch(function() {
+    // User fetch failed, will be redirected by requireAuth if needed
+  });
+}
+
+/**
+ * Dashboard page initialization
+ */
+function initDashboardPage() {
+  // Initialize common auth header
+  initAuthHeader();
+}
+
+/**
+ * Login page initialization
+ */
+function initLoginPage() {
+  // DOM elements
+  var loginForm = document.getElementById('login-form');
+  var emailInput = document.getElementById('email');
+  var passwordInput = document.getElementById('password');
+  var rememberMeCheckbox = document.getElementById('remember-me');
+  var errorEl = document.getElementById('error');
+  var loginBtn = document.getElementById('login-btn');
+  var btnText = loginBtn ? loginBtn.querySelector('.btn-text') : null;
+  var btnSpinner = loginBtn ? loginBtn.querySelector('.btn-spinner') : null;
+
+  // Redirect if already authenticated
+  checkAuthStatus().then(function(authenticated) {
+    if (authenticated) {
+      Auth.redirectAfterLogin();
+    }
+  });
+
+  // Form submission handler
+  if (loginForm) {
+    loginForm.addEventListener('submit', function(e) {
+      e.preventDefault();
+      clearError();
+
+      var email = emailInput ? emailInput.value.trim() : '';
+      var password = passwordInput ? passwordInput.value : '';
+      var rememberMe = rememberMeCheckbox ? rememberMeCheckbox.checked : false;
+
+      // Client-side validation
+      if (!validateEmail(email)) {
+        showLoginError('Please enter a valid email address');
+        if (emailInput) emailInput.focus();
+        return;
+      }
+
+      if (password.length < 1) {
+        showLoginError('Password is required');
+        if (passwordInput) passwordInput.focus();
+        return;
+      }
+
+      // Set loading state
+      setLoading(true);
+
+      // Call login API
+      Auth.login(email, password, rememberMe)
+        .then(function(response) {
+          setLoading(false);
+          Auth.storeTokens(response, rememberMe);
+          Auth.redirectAfterLogin();
+        })
+        .catch(function(err) {
+          setLoading(false);
+          handleLoginError(err);
+        });
+    });
+  }
+
+  // Check if user is already authenticated
+  function checkAuthStatus() {
+    var storedToken = sessionStorage.getItem('access_token') || localStorage.getItem('access_token');
+    if (!storedToken) {
+      return Promise.resolve(false);
+    }
+
+    return fetch('/api/v1/auth/me', {
+      headers: {
+        'Authorization': 'Bearer ' + storedToken
+      }
+    })
+    .then(function(response) {
+      return response.ok;
+    })
+    .catch(function() {
+      return false;
+    });
+  }
+
+  // Show error message
+  function showLoginError(message) {
+    if (errorEl) {
+      errorEl.textContent = message;
+      errorEl.style.display = 'block';
+    }
+  }
+
+  // Clear error message
+  function clearError() {
+    if (errorEl) {
+      errorEl.textContent = '';
+      errorEl.style.display = 'none';
+    }
+  }
+
+  // Set loading state
+  function setLoading(loading) {
+    if (loginBtn) {
+      loginBtn.disabled = loading;
+    }
+    if (btnText) {
+      btnText.style.display = loading ? 'none' : 'inline';
+    }
+    if (btnSpinner) {
+      btnSpinner.style.display = loading ? 'inline-block' : 'none';
+    }
+  }
+
+  // Handle login errors
+  function handleLoginError(err) {
+    var message = err.message || 'An error occurred during login';
+
+    // Handle specific error cases
+    if (message.toLowerCase().includes('invalid')) {
+      showLoginError('Invalid email or password. Please try again.');
+    } else if (err.message === 'Failed to fetch') {
+      showLoginError('Network error. Please check your connection and try again.');
+    } else {
+      showLoginError(message);
+    }
+  }
+
+  // Validate email format
+  function validateEmail(email) {
+    var re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
   }
 }
 
