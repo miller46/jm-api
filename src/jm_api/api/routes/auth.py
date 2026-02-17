@@ -14,6 +14,7 @@ from jm_api.api.deps import (
     create_refresh_token,
     decode_token,
     get_current_user,
+    hash_password,
     is_refresh_token_revoked,
     revoke_refresh_token,
     verify_password,
@@ -21,7 +22,7 @@ from jm_api.api.deps import (
 from jm_api.core.config import get_settings
 from jm_api.db.session import get_db
 from jm_api.models.user import User
-from jm_api.schemas.auth import LoginRequest, TokenResponse, UserResponse
+from jm_api.schemas.auth import LoginRequest, TokenResponse, UserCreate, UserResponse
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -98,6 +99,57 @@ def login(
         token_type="bearer",
         expires_in=settings.jwt_access_token_expire_minutes * 60,
     )
+
+
+@router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("3 per 15 minutes")
+def signup(
+    request: Request,
+    user_data: UserCreate,
+    db: Session = Depends(get_db),
+) -> User:
+    """Register a new user.
+
+    Rate limited to 3 attempts per 15 minutes per IP address.
+    """
+    # Check if user already exists
+    existing_user = db.execute(
+        select(User).where(User.email == user_data.email)
+    ).scalar_one_or_none()
+
+    if existing_user is not None:
+        logger.warning(
+            "auth.signup.failed",
+            reason="email_exists",
+            email=user_data.email,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+
+    # Create new user
+    password_hash = hash_password(user_data.password)
+    new_user = User(
+        email=user_data.email,
+        password_hash=password_hash,
+        is_active=True,
+        is_admin=user_data.is_admin,
+    )
+
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    logger.info(
+        "auth.signup.success",
+        user_id=new_user.id,
+        email=new_user.email,
+        request_id=_request_id(request),
+    )
+
+    return new_user
 
 
 @router.post("/refresh", response_model=TokenResponse)
