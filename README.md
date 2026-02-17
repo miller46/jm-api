@@ -1,5 +1,7 @@
 # JM API
 
+[![Integration Tests](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml/badge.svg?branch=main)](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml)
+
 JM API is a FastAPI + SQLAlchemy backend with JWT-based authentication, an admin web frontend, and built-in observability (metrics, tracing, structured logs).
 
 ## Overview
