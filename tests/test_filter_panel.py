@@ -424,9 +424,9 @@ class TestFetchAndRender:
         )
 
     def test_fetches_api_endpoint(self) -> None:
-        """Must fetch /api/v1/{table} with the given params."""
+        """Must fetch /api/v1/{table} with the given params using Auth.fetchWithAuth."""
         assert self.fn_body is not None
-        assert "fetch(" in self.fn_body, "fetchAndRender must call fetch()"
+        assert "Auth.fetchWithAuth(" in self.fn_body, "fetchAndRender must call Auth.fetchWithAuth()"
         assert "/api/v1/" in self.fn_body, "fetchAndRender must use /api/v1/ endpoint"
 
     def test_updates_table_state(self) -> None:
