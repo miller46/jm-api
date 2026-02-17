@@ -4,16 +4,30 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 from starlette.staticfiles import StaticFiles
 
 from jm_api.api.router import router as api_router
+from jm_api.api.routes import limiter
 from jm_api.core.config import get_settings
 from jm_api.core.lifespan import lifespan
 from jm_api.core.logging import configure_logging
 from jm_api.middleware.request_id import RequestIdMiddleware
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+
+
+def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Handle rate limit exceeded errors."""
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please try again later."},
+    )
 
 
 def create_app() -> FastAPI:
@@ -29,6 +43,11 @@ def create_app() -> FastAPI:
         redoc_url=settings.redoc_url if settings.docs_enabled else None,
         lifespan=lifespan,
     )
+
+    # Add rate limiting
+    app.state.limiter = limiter
+    app.add_middleware(SlowAPIMiddleware)
+    app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
     app.add_middleware(RequestIdMiddleware, header_name=settings.request_id_header)
 
