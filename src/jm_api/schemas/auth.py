@@ -10,7 +10,6 @@ class UserCreate(BaseModel):
 
     email: EmailStr
     password: str = Field(..., min_length=8, max_length=128)
-    is_admin: bool = False
 
 
 class UserResponse(BaseModel):

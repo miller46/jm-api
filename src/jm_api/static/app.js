@@ -21,6 +21,7 @@ var Auth = {
     return useLocal ? localStorage : sessionStorage;
   },
 
+
   // Get safe redirect URL from query params - prevents open redirect attacks
   getSafeRedirectUrl: function() {
     var params = new URLSearchParams(window.location.search);
