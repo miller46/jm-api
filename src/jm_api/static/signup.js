@@ -7,22 +7,22 @@
   'use strict';
 
   // Form elements
-  var form = document.getElementById('signup-form');
-  var emailInput = document.getElementById('email');
-  var passwordInput = document.getElementById('password');
-  var confirmPasswordInput = document.getElementById('confirm-password');
-  var submitBtn = document.getElementById('submit-btn');
-  var toastContainer = document.getElementById('toast-container');
+  const form = document.getElementById('signup-form');
+  const emailInput = document.getElementById('email');
+  const passwordInput = document.getElementById('password');
+  const confirmPasswordInput = document.getElementById('confirm-password');
+  const submitBtn = document.getElementById('submit-btn');
+  const toastContainer = document.getElementById('toast-container');
 
   // Field error elements
-  var emailError = document.getElementById('email-error');
-  var passwordError = document.getElementById('password-error');
-  var confirmPasswordError = document.getElementById('confirm-password-error');
-  var passwordStrengthBar = document.getElementById('password-strength-bar');
-  var passwordStrengthText = document.getElementById('password-strength-text');
+  const emailError = document.getElementById('email-error');
+  const passwordError = document.getElementById('password-error');
+  const confirmPasswordError = document.getElementById('confirm-password-error');
+  const passwordStrengthBar = document.getElementById('password-strength-bar');
+  const passwordStrengthText = document.getElementById('password-strength-text');
 
   // Validation state
-  var validationState = {
+  const validationState = {
     email: false,
     password: false,
     confirmPassword: false
@@ -32,7 +32,7 @@
    * Check if user is already authenticated and redirect if so
    */
   function checkAuth() {
-    var token = localStorage.getItem('access_token');
+    const token = localStorage.getItem('access_token');
     if (token) {
       // Verify token is valid by calling /me endpoint
       fetch('/api/v1/auth/me', {
@@ -59,9 +59,8 @@
   /**
    * Show a toast notification
    */
-  function showToast(message, type) {
-    type = type || 'error';
-    var toast = document.createElement('div');
+  function showToast(message, type = 'error') {
+    const toast = document.createElement('div');
     toast.className = 'toast ' + type;
     toast.textContent = message;
     toastContainer.appendChild(toast);
@@ -95,7 +94,7 @@
    * Validate email format
    */
   function isValidEmail(email) {
-    var emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return emailRegex.test(email);
   }
 
@@ -104,7 +103,7 @@
    * Returns: 0 (weak), 1 (medium), 2 (strong)
    */
   function calculatePasswordStrength(password) {
-    var strength = 0;
+    let strength = 0;
     
     if (password.length >= 8) strength++;
     if (password.length >= 12) strength++;
@@ -121,7 +120,7 @@
    * Update password strength indicator
    */
   function updatePasswordStrength(password) {
-    var strength = calculatePasswordStrength(password);
+    const strength = calculatePasswordStrength(password);
     
     passwordStrengthBar.className = 'password-strength-bar';
     
@@ -165,8 +164,8 @@
    * Validate email field
    */
   function validateEmail() {
-    var email = emailInput.value.trim();
-    var isValid = isValidEmail(email);
+    const email = emailInput.value.trim();
+    const isValid = isValidEmail(email);
     showFieldError(emailInput, emailError, !isValid && email.length > 0);
     validationState.email = isValid;
     return isValid;
@@ -176,8 +175,8 @@
    * Validate password field
    */
   function validatePassword() {
-    var password = passwordInput.value;
-    var isValid = isValidPassword(password);
+    const password = passwordInput.value;
+    const isValid = isValidPassword(password);
     showFieldError(passwordInput, passwordError, !isValid && password.length > 0);
     validationState.password = isValid;
     return isValid;
@@ -187,9 +186,9 @@
    * Validate confirm password field
    */
   function validateConfirmPassword() {
-    var password = passwordInput.value;
-    var confirmPassword = confirmPasswordInput.value;
-    var isValid = password === confirmPassword && confirmPassword.length > 0;
+    const password = passwordInput.value;
+    const confirmPassword = confirmPasswordInput.value;
+    const isValid = password === confirmPassword && confirmPassword.length > 0;
     showFieldError(confirmPasswordInput, confirmPasswordError, !isValid && confirmPassword.length > 0);
     validationState.confirmPassword = isValid;
     return isValid;
@@ -199,9 +198,9 @@
    * Validate entire form
    */
   function validateForm() {
-    var emailValid = validateEmail();
-    var passwordValid = validatePassword();
-    var confirmValid = validateConfirmPassword();
+    const emailValid = validateEmail();
+    const passwordValid = validatePassword();
+    const confirmValid = validateConfirmPassword();
     
     return emailValid && passwordValid && confirmValid;
   }
@@ -232,8 +231,7 @@
       },
       body: JSON.stringify({
         email: email,
-        password: password,
-        is_admin: false
+        password: password
       })
     })
     .then(function(response) {
@@ -246,7 +244,7 @@
           
           // Redirect to login page after a short delay
           setTimeout(function() {
-            window.location.href = '/admin/login';
+            window.location.href = 'login.html';
           }, 2000);
         });
       } else if (response.status === 409) {
@@ -256,9 +254,9 @@
       } else if (response.status === 422) {
         // Validation error
         return response.json().then(function(data) {
-          var detail = data.detail;
+          const detail = data.detail;
           if (Array.isArray(detail)) {
-            var messages = detail.map(function(err) {
+            const messages = detail.map(function(err) {
               return err.msg;
             }).join('; ');
             showToast('Validation error: ' + messages, 'error');
@@ -323,7 +321,7 @@
    * (This is just a fallback - the actual login page should be implemented separately)
    */
   function ensureLoginPageExists() {
-    // The login link points to /admin/login which should be handled by the backend
+    // The login link points to login.html within /admin static files
     // or another static file. For now, we assume it exists.
   }
 

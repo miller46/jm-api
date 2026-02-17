@@ -102,7 +102,7 @@ def login(
 
 
 @router.post("/signup", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit("3 per 15 minutes")
+@limiter.limit("5 per 15 minutes")
 def signup(
     request: Request,
     user_data: UserCreate,
@@ -110,7 +110,7 @@ def signup(
 ) -> User:
     """Register a new user.
 
-    Rate limited to 3 attempts per 15 minutes per IP address.
+    Rate limited to 5 attempts per 15 minutes per IP address.
     """
     # Check if user already exists
     existing_user = db.execute(
@@ -135,7 +135,7 @@ def signup(
         email=user_data.email,
         password_hash=password_hash,
         is_active=True,
-        is_admin=user_data.is_admin,
+        is_admin=False,
     )
 
     db.add(new_user)

@@ -406,7 +406,8 @@ function fetchAndRender(params) {
   var loadingEl = document.getElementById("loading");
   if (loadingEl) loadingEl.style.display = "block";
 
-  fetch(url)
+  // Use authenticated wrapper instead of raw fetch(url)
+  Auth.fetchWithAuth(url)
     .then(function (response) {
       if (!response.ok) {
         throw new Error("HTTP " + response.status);
