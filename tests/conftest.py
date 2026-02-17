@@ -33,6 +33,15 @@ def monkeypatch_session():
     mp.undo()
 
 
+@pytest.fixture(autouse=True)
+def reset_rate_limit_storage():
+    """Reset rate limiter storage before each test."""
+    from jm_api.api.routes.auth import limiter
+    # Reset the limiter storage
+    limiter.reset()
+    yield
+
+
 @pytest.fixture
 def db_engine():
     """Create in-memory SQLite engine for test isolation."""

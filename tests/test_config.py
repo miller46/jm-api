@@ -45,6 +45,7 @@ class TestDatabaseUrlConfig:
         settings = Settings(
             environment="production",
             database_url="postgresql://user:pass@localhost/proddb",
+            jwt_secret_key="super-secure-production-secret",
         )
         assert settings.database_url == "postgresql://user:pass@localhost/proddb"
 
@@ -54,6 +55,14 @@ class TestDatabaseUrlConfig:
             Settings(
                 environment="staging",
                 database_url="sqlite:///./staging.db",
+            )
+
+    def test_default_jwt_secret_not_allowed_in_production(self) -> None:
+        """Production environment requires overriding the default JWT secret."""
+        with pytest.raises(ValueError, match="Default JWT secret is not allowed"):
+            Settings(
+                environment="production",
+                database_url="postgresql://user:pass@localhost/proddb",
             )
 
 
