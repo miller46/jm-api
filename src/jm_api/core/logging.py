@@ -3,12 +3,19 @@ from __future__ import annotations
 import logging
 import logging.config
 import random
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import structlog
 
+REDACTED_VALUE = "***REDACTED***"
+SENSITIVE_FIELD_MARKERS = ("token", "password")
+SENSITIVE_FIELD_NAMES = {"password", "password_hash", "access_token", "refresh_token", "token"}
+
 
 class SamplingFilter(logging.Filter):
+    """Sampling filter that always keeps warning/error logs."""
+
     def __init__(self, sample_rate: float) -> None:
         super().__init__()
         self.sample_rate = sample_rate
@@ -19,16 +26,40 @@ class SamplingFilter(logging.Filter):
         return random.random() <= self.sample_rate
 
 
+def _is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    if lowered in SENSITIVE_FIELD_NAMES:
+        return True
+    return any(marker in lowered for marker in SENSITIVE_FIELD_MARKERS)
+
+
+def _redact_nested(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        redacted: dict[Any, Any] = {}
+        for key, nested_value in value.items():
+            key_str = str(key)
+            if _is_sensitive_key(key_str):
+                redacted[key] = REDACTED_VALUE
+            else:
+                redacted[key] = _redact_nested(nested_value)
+        return redacted
+
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        redacted_items = [_redact_nested(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(redacted_items)
+        return redacted_items
+
+    return value
+
+
 def redact_sensitive(_logger: Any, _method_name: str, event_dict: dict[str, Any]) -> dict[str, Any]:
-    redacted_fields = {"password", "password_hash", "access_token", "refresh_token", "token"}
-    for key in list(event_dict.keys()):
-        lowered = key.lower()
-        if lowered in redacted_fields or "token" in lowered or "password" in lowered:
-            event_dict[key] = "***REDACTED***"
-    return event_dict
+    """Redact sensitive keys recursively in nested log payloads."""
+    return _redact_nested(event_dict)
 
 
 def configure_logging(level: str, json_logs: bool = True, sample_rate: float = 1.0) -> None:
+    """Configure stdlib logging and structlog processors."""
     renderer: structlog.types.Processor
     if json_logs:
         renderer = structlog.processors.JSONRenderer()

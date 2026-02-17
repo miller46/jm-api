@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 import structlog
 from fastapi import FastAPI, Response
@@ -13,6 +14,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from sqlalchemy import Engine, event
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from jm_api.core.config import Settings
 
@@ -37,29 +39,47 @@ REQUEST_ERRORS = Counter(
 
 
 class MetricsMiddleware:
-    def __init__(self, app: FastAPI, service: str, version: str) -> None:
+    """Collect request metrics with bounded-label cardinality."""
+
+    def __init__(self, app: ASGIApp, service: str, version: str) -> None:
         self.app = app
         self.service = service
         self.version = version
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
 
         method = scope.get("method", "UNKNOWN")
-        endpoint = scope.get("path", "")
+        endpoint = self._metric_endpoint(scope)
         status_code = 500
         start = time.perf_counter()
 
-        async def send_wrapper(message):
+        async def send_wrapper(message: Message) -> None:
             nonlocal status_code
             if message["type"] == "http.response.start":
-                status_code = message["status"]
+                status_code = int(message["status"])
             await send(message)
 
-        await self.app(scope, receive, send_wrapper)
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception:
+            self._record_metrics(method=method, endpoint=endpoint, status_code=500, start=start)
+            raise
 
+        self._record_metrics(method=method, endpoint=endpoint, status_code=status_code, start=start)
+
+    def _metric_endpoint(self, scope: Scope) -> str:
+        """Prefer route template to avoid high-cardinality labels (e.g., IDs in paths)."""
+        route = scope.get("route")
+        route_path = getattr(route, "path", None)
+        if isinstance(route_path, str) and route_path:
+            return route_path
+        path = scope.get("path", "")
+        return str(path) if path else "unknown"
+
+    def _record_metrics(self, method: str, endpoint: str, status_code: int, start: float) -> None:
         duration = time.perf_counter() - start
         status_label = str(status_code)
         REQUEST_COUNT.labels(self.service, self.version, method, endpoint, status_label).inc()
@@ -69,6 +89,7 @@ class MetricsMiddleware:
 
 
 def install_metrics(app: FastAPI, settings: Settings) -> None:
+    """Install Prometheus metrics endpoint and middleware."""
     if not settings.metrics_enabled:
         return
 
@@ -84,7 +105,11 @@ def install_metrics(app: FastAPI, settings: Settings) -> None:
 
 
 def install_tracing(app: FastAPI, settings: Settings) -> None:
+    """Install tracing instrumentation in an idempotent way."""
     if not settings.tracing_enabled:
+        return
+
+    if getattr(app.state, "tracing_installed", False):
         return
 
     resource = Resource.create(
@@ -101,12 +126,18 @@ def install_tracing(app: FastAPI, settings: Settings) -> None:
         agent_port=settings.tracing_jaeger_port,
     )
     tracer_provider.add_span_processor(BatchSpanProcessor(jaeger_exporter))
-    trace.set_tracer_provider(tracer_provider)
 
-    FastAPIInstrumentor.instrument_app(app, tracer_provider=tracer_provider)
+    current_provider: Any = trace.get_tracer_provider()
+    if not isinstance(current_provider, TracerProvider):
+        trace.set_tracer_provider(tracer_provider)
+        current_provider = tracer_provider
+
+    FastAPIInstrumentor.instrument_app(app, tracer_provider=current_provider)
+    app.state.tracing_installed = True
 
 
 def instrument_sqlalchemy(engine: Engine, settings: Settings) -> None:
+    """Instrument SQLAlchemy and emit structured query timing logs."""
     if settings.tracing_enabled:
         SQLAlchemyInstrumentor().instrument(engine=engine)
 
