@@ -174,12 +174,55 @@
         storage.setItem('remember_me', rememberMe ? 'true' : 'false');
       }
       
+      // Get safe redirect URL - prevents open redirect vulnerability
+      function getSafeRedirectUrl(redirectTo) {
+        // Default fallback
+        var defaultUrl = 'index.html';
+
+        if (!redirectTo) {
+          return defaultUrl;
+        }
+
+        try {
+          // Decode the URL
+          var decoded = decodeURIComponent(redirectTo);
+
+          // Check for protocol-relative URLs (//evil.com) or absolute URLs with protocol
+          if (/^\/\//.test(decoded) || /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(decoded)) {
+            // It's an absolute URL - check if it's same-origin
+            var redirectUrl = new URL(decoded, window.location.href);
+            if (redirectUrl.origin !== window.location.origin) {
+              return defaultUrl;
+            }
+            return decoded;
+          }
+
+          // It's a relative URL (starts with / or is just a path like index.html)
+          // Check for @ symbol which could indicate username in URL (user@evil.com)
+          if (decoded.indexOf('@') !== -1) {
+            return defaultUrl;
+          }
+
+          // Check for backslash which could be used to bypass filters
+          if (decoded.indexOf('\\') !== -1) {
+            return defaultUrl;
+          }
+
+          return decoded;
+        } catch (e) {
+          // If URL parsing fails, fall back to default
+          return defaultUrl;
+        }
+      }
+
       // Redirect after successful login
       function redirectAfterLogin() {
         // Check for redirect URL in query params
         var params = new URLSearchParams(window.location.search);
         var redirectTo = params.get('redirect') || 'index.html';
-        window.location.href = decodeURIComponent(redirectTo);
+        // Validate redirect URL to prevent open redirect vulnerability
+        var safeRedirect = getSafeRedirectUrl(redirectTo);
+        window.location.href = safeRedirect;
       }
       
       // Handle login errors
