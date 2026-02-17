@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import structlog
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
@@ -13,7 +14,6 @@ from jm_api.api.deps import (
     create_refresh_token,
     decode_token,
     get_current_user,
-    hash_password,
     is_refresh_token_revoked,
     revoke_refresh_token,
     verify_password,
@@ -23,10 +23,14 @@ from jm_api.db.session import get_db
 from jm_api.models.user import User
 from jm_api.schemas.auth import LoginRequest, TokenResponse, UserResponse
 
-# Create limiter for rate limiting
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+logger = structlog.get_logger(__name__)
+
+
+def _request_id(request: Request) -> str | None:
+    return getattr(request.state, "request_id", None)
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -41,13 +45,15 @@ def login(
 
     Rate limited to 5 attempts per 15 minutes per IP address.
     """
-    # Find user by email
-    user = db.execute(
-        select(User).where(User.email == login_data.email)
-    ).scalar_one_or_none()
+    user = db.execute(select(User).where(User.email == login_data.email)).scalar_one_or_none()
 
-    # Verify user exists and password is correct
     if user is None or not verify_password(login_data.password, user.password_hash):
+        logger.warning(
+            "auth.login.failed",
+            reason="invalid_credentials",
+            email=login_data.email,
+            request_id=_request_id(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -55,18 +61,28 @@ def login(
         )
 
     if not user.is_active:
+        logger.warning(
+            "auth.login.failed",
+            reason="user_inactive",
+            email=login_data.email,
+            request_id=_request_id(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User account is deactivated",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Create tokens
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
 
-    # Set refresh token in httpOnly cookie
     settings = get_settings()
+    logger.info(
+        "auth.login.success",
+        user_id=user.id,
+        email=user.email,
+        request_id=_request_id(request),
+    )
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,
@@ -86,6 +102,7 @@ def login(
 
 @router.post("/refresh", response_model=TokenResponse)
 def refresh_token(
+    request: Request,
     response: Response,
     refresh_token_cookie: str | None = Cookie(None, alias="refresh_token"),
     db: Session = Depends(get_db),
@@ -94,6 +111,11 @@ def refresh_token(
     token = refresh_token_cookie
 
     if token is None:
+        logger.warning(
+            "auth.refresh.failed",
+            reason="missing_refresh_cookie",
+            request_id=_request_id(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token required",
@@ -101,28 +123,41 @@ def refresh_token(
         )
 
     if is_refresh_token_revoked(token):
+        logger.warning(
+            "auth.refresh.failed",
+            reason="refresh_token_revoked",
+            request_id=_request_id(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token has been revoked",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Decode and validate refresh token
     token_payload = decode_token(token)
 
     if token_payload.type != "refresh":
+        logger.warning(
+            "auth.refresh.failed",
+            reason="invalid_token_type",
+            token_type=token_payload.type,
+            request_id=_request_id(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token type",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Get user
-    user = db.execute(
-        select(User).where(User.id == token_payload.sub)
-    ).scalar_one_or_none()
+    user = db.execute(select(User).where(User.id == token_payload.sub)).scalar_one_or_none()
 
     if user is None:
+        logger.warning(
+            "auth.refresh.failed",
+            reason="user_not_found",
+            user_id=token_payload.sub,
+            request_id=_request_id(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
@@ -130,13 +165,18 @@ def refresh_token(
         )
 
     if not user.is_active:
+        logger.warning(
+            "auth.refresh.failed",
+            reason="user_inactive",
+            user_id=user.id,
+            request_id=_request_id(request),
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User is inactive",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Rotate refresh token: revoke old one and set a new one in cookie
     settings = get_settings()
     new_access_token = create_access_token(user.id)
     new_refresh_token = create_refresh_token(user.id)
@@ -151,6 +191,12 @@ def refresh_token(
         max_age=settings.jwt_refresh_token_expire_days * 24 * 60 * 60,
     )
 
+    logger.info(
+        "auth.refresh.success",
+        user_id=user.id,
+        request_id=_request_id(request),
+    )
+
     return TokenResponse(
         access_token=new_access_token,
         refresh_token=new_refresh_token,
@@ -161,12 +207,19 @@ def refresh_token(
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(
+    request: Request,
     response: Response,
     refresh_token_cookie: str | None = Cookie(None, alias="refresh_token"),
 ) -> None:
     """Logout user by revoking refresh token and clearing the refresh-token cookie."""
     if refresh_token_cookie is not None:
         revoke_refresh_token(refresh_token_cookie)
+
+    logger.info(
+        "auth.logout.success",
+        had_refresh_cookie=refresh_token_cookie is not None,
+        request_id=_request_id(request),
+    )
 
     response.delete_cookie(key="refresh_token")
     return None

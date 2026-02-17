@@ -26,12 +26,39 @@ idna==3.11
     # via anyio
 psycopg2-binary==2.9.11
     # via jm-api
+prometheus-client==0.23.1
+    # via jm-api
 pydantic==2.12.5
     # via
     #   fastapi
     #   pydantic-settings
 pydantic-core==2.41.5
     # via pydantic
+opentelemetry-api==1.38.0
+    # via
+    #   jm-api
+    #   opentelemetry-sdk
+opentelemetry-exporter-jaeger-thrift==1.21.0
+    # via jm-api
+opentelemetry-instrumentation-asgi==0.59b0
+    # via
+    #   opentelemetry-instrumentation-fastapi
+opentelemetry-instrumentation-fastapi==0.59b0
+    # via jm-api
+opentelemetry-instrumentation-sqlalchemy==0.59b0
+    # via jm-api
+opentelemetry-instrumentation==0.59b0
+    # via
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-instrumentation-sqlalchemy
+opentelemetry-sdk==1.38.0
+    # via jm-api
+opentelemetry-semantic-conventions==0.59b0
+    # via
+    #   opentelemetry-instrumentation-asgi
+    #   opentelemetry-instrumentation-fastapi
+    #   opentelemetry-sdk
 pydantic-settings==2.12.0
     # via jm-api
 python-dotenv==1.2.1
@@ -44,6 +71,8 @@ sqlalchemy==2.0.46
     # via jm-api
 starlette==0.50.0
     # via fastapi
+structlog==25.5.0
+    # via jm-api
 typing-extensions==4.15.0
     # via
     #   anyio

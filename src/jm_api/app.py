@@ -4,7 +4,6 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -17,6 +16,7 @@ from jm_api.api.routes import limiter
 from jm_api.core.config import get_settings
 from jm_api.core.lifespan import lifespan
 from jm_api.core.logging import configure_logging
+from jm_api.core.observability import install_metrics, install_tracing
 from jm_api.middleware.request_id import RequestIdMiddleware
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -32,7 +32,11 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSO
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(
+        settings.log_level,
+        json_logs=settings.log_json,
+        sample_rate=settings.log_sample_rate,
+    )
 
     app = FastAPI(
         title=settings.app_name,
@@ -43,6 +47,9 @@ def create_app() -> FastAPI:
         redoc_url=settings.redoc_url if settings.docs_enabled else None,
         lifespan=lifespan,
     )
+
+    install_tracing(app, settings)
+    install_metrics(app, settings)
 
     # Add rate limiting
     app.state.limiter = limiter
