@@ -187,30 +187,7 @@ class TestRefreshEndpoint:
     """Test the refresh token endpoint."""
 
     def test_refresh_token_success(self, client: TestClient, test_user: User) -> None:
-        """Test refreshing tokens with valid refresh token."""
-        # First login to get tokens
-        login_response = client.post(
-            "/api/v1/auth/login",
-            json={
-                "email": "test@example.com",
-                "password": "securepassword123",
-            },
-        )
-        refresh_token = login_response.json()["refresh_token"]
-
-        # Refresh tokens
-        response = client.post(
-            "/api/v1/auth/refresh",
-            json={"refresh_token": refresh_token},
-        )
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        assert "access_token" in data
-        assert "refresh_token" in data
-        assert data["token_type"] == "bearer"
-
-    def test_refresh_token_from_cookie(self, client: TestClient, test_user: User) -> None:
-        """Test refreshing tokens using cookie."""
+        """Test refreshing tokens with valid refresh token cookie."""
         # First login to set the cookie
         client.post(
             "/api/v1/auth/login",
@@ -220,12 +197,34 @@ class TestRefreshEndpoint:
             },
         )
 
+        # Refresh tokens
+        response = client.post("/api/v1/auth/refresh")
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert "access_token" in data
+        assert "refresh_token" in data
+        assert data["token_type"] == "bearer"
+
+    def test_refresh_token_from_cookie(self, client: TestClient, test_user: User) -> None:
+        """Test refreshing tokens rotates refresh cookie."""
+        # First login to set the cookie
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": "test@example.com",
+                "password": "securepassword123",
+            },
+        )
+        old_refresh_token = login_response.json()["refresh_token"]
+
         # Refresh using cookie
         response = client.post("/api/v1/auth/refresh")
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert "access_token" in data
         assert "refresh_token" in data
+        assert data["refresh_token"] != old_refresh_token
+        assert client.cookies.get("refresh_token") == data["refresh_token"]
 
     def test_refresh_no_token(self, client: TestClient) -> None:
         """Test refresh without token returns 401."""
@@ -234,11 +233,9 @@ class TestRefreshEndpoint:
         assert "Refresh token required" in response.json()["detail"]
 
     def test_refresh_invalid_token(self, client: TestClient) -> None:
-        """Test refresh with invalid token returns 401."""
-        response = client.post(
-            "/api/v1/auth/refresh",
-            json={"refresh_token": "invalid_token"},
-        )
+        """Test refresh with invalid cookie token returns 401."""
+        client.cookies.set("refresh_token", "invalid_token")
+        response = client.post("/api/v1/auth/refresh")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
@@ -260,6 +257,25 @@ class TestLogoutEndpoint:
         # Logout
         response = client.post("/api/v1/auth/logout")
         assert response.status_code == status.HTTP_204_NO_CONTENT
+
+    def test_logout_revokes_current_refresh_token(self, client: TestClient, test_user: User) -> None:
+        """Test logout revokes the refresh token used for the session."""
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={
+                "email": "test@example.com",
+                "password": "securepassword123",
+            },
+        )
+        refresh_token = login_response.json()["refresh_token"]
+
+        response = client.post("/api/v1/auth/logout")
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        # Try to reuse the revoked token directly
+        client.cookies.set("refresh_token", refresh_token)
+        refresh_response = client.post("/api/v1/auth/refresh")
+        assert refresh_response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 class TestRateLimiting:

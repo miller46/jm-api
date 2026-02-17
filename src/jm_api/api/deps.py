@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING
+from uuid import uuid4
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException, Request, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -17,10 +17,35 @@ from jm_api.db.session import get_db
 from jm_api.models.user import User
 from jm_api.schemas.auth import TokenPayload
 
-if TYPE_CHECKING:
-    pass
-
 security = HTTPBearer(auto_error=False)
+
+# In-memory refresh token denylist (token -> exp timestamp)
+_REVOKED_REFRESH_TOKENS: dict[str, int] = {}
+
+
+def _prune_expired_revoked_tokens() -> None:
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    expired_tokens = [token for token, exp in _REVOKED_REFRESH_TOKENS.items() if exp <= now_ts]
+    for token in expired_tokens:
+        _REVOKED_REFRESH_TOKENS.pop(token, None)
+
+
+def revoke_refresh_token(token: str) -> None:
+    """Revoke a refresh token until it expires."""
+    _prune_expired_revoked_tokens()
+    try:
+        payload = decode_token(token)
+    except HTTPException:
+        return
+
+    if payload.type == "refresh":
+        _REVOKED_REFRESH_TOKENS[token] = payload.exp
+
+
+def is_refresh_token_revoked(token: str) -> bool:
+    """Check whether a refresh token has been revoked."""
+    _prune_expired_revoked_tokens()
+    return token in _REVOKED_REFRESH_TOKENS
 
 
 def hash_password(password: str) -> str:
@@ -41,20 +66,20 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_access_token(user_id: str, expires_delta: timedelta | None = None) -> str:
     """Create a JWT access token."""
     settings = get_settings()
-    
+
     if expires_delta is None:
         expires_delta = timedelta(minutes=settings.jwt_access_token_expire_minutes)
-    
+
     now = datetime.now(timezone.utc)
     expire = now + expires_delta
-    
+
     payload = {
         "sub": user_id,
         "exp": int(expire.timestamp()),
         "iat": int(now.timestamp()),
         "type": "access",
     }
-    
+
     return jwt.encode(
         payload,
         settings.jwt_secret_key,
@@ -65,17 +90,18 @@ def create_access_token(user_id: str, expires_delta: timedelta | None = None) ->
 def create_refresh_token(user_id: str) -> str:
     """Create a JWT refresh token."""
     settings = get_settings()
-    
+
     now = datetime.now(timezone.utc)
     expire = now + timedelta(days=settings.jwt_refresh_token_expire_days)
-    
+
     payload = {
         "sub": user_id,
         "exp": int(expire.timestamp()),
         "iat": int(now.timestamp()),
+        "jti": str(uuid4()),
         "type": "refresh",
     }
-    
+
     return jwt.encode(
         payload,
         settings.jwt_secret_key,
@@ -86,7 +112,7 @@ def create_refresh_token(user_id: str) -> str:
 def decode_token(token: str) -> TokenPayload:
     """Decode and validate a JWT token."""
     settings = get_settings()
-    
+
     try:
         payload = jwt.decode(
             token,
@@ -119,57 +145,36 @@ def get_current_user(
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     token_payload = decode_token(credentials.credentials)
-    
+
     if token_payload.type != "access":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token type",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     user = db.execute(
         select(User).where(User.id == token_payload.sub)
     ).scalar_one_or_none()
-    
+
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User is inactive",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     return user
 
 
-def get_current_active_user(
-    current_user: User = Depends(get_current_user),
-) -> User:
-    """Get the current active user."""
-    if not current_user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user",
-        )
-    return current_user
-
-
-class AuthDependency:
-    """Dependency for requiring authentication on routes."""
-    
-    def __call__(
-        self,
-        current_user: User = Depends(get_current_active_user),
-    ) -> User:
-        return current_user
-
-
-require_auth = AuthDependency()
+get_current_active_user = get_current_user
+require_auth = get_current_active_user

@@ -5,8 +5,9 @@ from functools import lru_cache
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Environments that require explicit database configuration
+# Environments that require explicit production safeguards
 _PRODUCTION_ENVIRONMENTS = {"production", "staging"}
+_DEFAULT_JWT_SECRET = "change-me-in-production-change-me-in-production"
 
 
 class Settings(BaseSettings):
@@ -27,6 +28,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "SQLite is not recommended for production. "
                     "Use PostgreSQL or another production database."
+                )
+
+            if self.jwt_secret_key == _DEFAULT_JWT_SECRET:
+                raise ValueError(
+                    "Default JWT secret is not allowed in production/staging. "
+                    "Set JM_API_JWT_SECRET_KEY to a strong secret."
                 )
         return self
 
@@ -49,7 +56,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
 
     # JWT Settings
-    jwt_secret_key: str = Field(default="change-me-in-production-change-me-in-production")
+    jwt_secret_key: str = Field(default=_DEFAULT_JWT_SECRET)
     jwt_algorithm: str = Field(default="HS256")
     jwt_access_token_expire_minutes: int = Field(default=15)
     jwt_refresh_token_expire_days: int = Field(default=7)
