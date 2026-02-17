@@ -1,3 +1,5 @@
+// Tables configuration - kept for backward compatibility
+// Tables are now dynamically loaded from the API
 const TABLES = ["bots"];
 
 // ============ AUTH MODULE ============

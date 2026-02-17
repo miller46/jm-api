@@ -6,13 +6,19 @@ body {
   background: #f8f9fa;
   margin: 0;
   padding: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Centered container */
 main {
   max-width: 960px;
-  margin: 2rem auto;
-  padding: 0 1rem;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  flex: 1;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 h1 {
@@ -48,6 +54,12 @@ ul li a:hover {
 .table-wrapper {
   overflow: hidden;
   border-radius: 4px;
+  max-width: 100%;
+}
+
+.table-scroll-container {
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 /* Table styling */
@@ -56,6 +68,7 @@ table {
   border-collapse: collapse;
   border: 1px solid #dee2e6;
   background: #fff;
+  min-width: 600px;
 }
 
 th, td {
@@ -371,6 +384,158 @@ tbody tr:hover {
   }
 }
 
+/* ============================================================================
+   Tables Overview Page
+   ============================================================================ */
+
+/* Tables list container */
+#tables-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+#tables-list li {
+  margin-bottom: 0.75rem;
+}
+
+#tables-list li.table-hidden {
+  display: none;
+}
+
+#tables-list li a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+  text-decoration: none;
+  color: #0d6efd;
+  transition: all 0.15s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+#tables-list li a:hover {
+  background: #e9ecef;
+  border-color: #adb5bd;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+#tables-list li a .table-name {
+  font-weight: 500;
+  font-size: 1rem;
+}
+
+#tables-list li a .table-arrow {
+  color: #6c757d;
+  font-size: 1.1rem;
+}
+
+/* Table visibility controls */
+.table-visibility-controls {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #fff;
+  border: 1px solid #dee2e6;
+  border-radius: 6px;
+}
+
+.table-visibility-controls summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.5rem 0;
+  user-select: none;
+}
+
+.table-visibility-controls summary:hover {
+  color: #0d6efd;
+}
+
+#table-checkboxes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  padding-top: 0.75rem;
+}
+
+#table-checkboxes label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  font-size: 0.95rem;
+  user-select: none;
+}
+
+#table-checkboxes input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  cursor: pointer;
+}
+
+/* Empty state for tables list */
+.tables-empty-state {
+  text-align: center;
+  padding: 3rem 2rem;
+  color: #6c757d;
+}
+
+.tables-empty-state p {
+  margin: 0.5rem 0;
+}
+
+/* Dashboard page actions */
+.dashboard-actions {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.dashboard-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Loading state for tables */
+.tables-loading {
+  text-align: center;
+  padding: 3rem 2rem;
+  color: #6c757d;
+}
+
+.tables-loading::after {
+  content: "";
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  margin-left: 0.5rem;
+  border: 2px solid #dee2e6;
+  border-top-color: #0d6efd;
+  border-radius: 50%;
+  animation: spinner 0.8s linear infinite;
+}
+
+/* Show all tables link */
+.show-all-tables {
+  margin-top: 1rem;
+  text-align: center;
+}
+
+.show-all-tables a {
+  color: #0d6efd;
+  text-decoration: none;
+  font-size: 0.9rem;
+}
+
+.show-all-tables a:hover {
+  text-decoration: underline;
+}
+
 /* Header with auth controls */
 .auth-header {
   display: flex;
@@ -379,23 +544,32 @@ tbody tr:hover {
   padding: 1rem 2rem;
   background: #fff;
   border-bottom: 1px solid #dee2e6;
-  margin: -2rem -1rem 2rem -1rem;
+  flex-shrink: 0;
+  gap: 1rem;
 }
 
 .auth-header h1 {
   margin: 0;
   font-size: 1.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .auth-controls {
   display: flex;
   align-items: center;
   gap: 1rem;
+  flex-shrink: 0;
 }
 
 .auth-controls .user-email {
   color: #6c757d;
   font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
 }
 
 .auth-controls .btn-logout {
@@ -407,11 +581,27 @@ tbody tr:hover {
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s;
+  white-space: nowrap;
 }
 
 .auth-controls .btn-logout:hover {
   color: #fff;
   background: #dc3545;
+}
+
+/* Responsive header */
+@media (max-width: 640px) {
+  .auth-header {
+    padding: 1rem;
+  }
+
+  .auth-header h1 {
+    font-size: 1.25rem;
+  }
+
+  .auth-controls .user-email {
+    display: none;
+  }
 }
 
 /* Access denied / auth required message */

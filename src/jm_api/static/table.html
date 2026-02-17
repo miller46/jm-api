@@ -14,27 +14,36 @@
       <button class="btn-logout" id="logout-btn">Logout</button>
     </div>
   </header>
-  
+
   <main>
-    <a href="index.html">&larr; Back to dashboard</a>
-    <a id="add-record-btn" href="" class="btn btn-primary">Add Record</a>
+    <div class="dashboard-actions">
+      <a href="index.html" class="btn btn-secondary">&larr; Back to dashboard</a>
+      <a id="add-record-btn" href="" class="btn btn-primary">Add Record</a>
+    </div>
+
     <details id="column-toggle">
       <summary>Columns</summary>
       <div id="column-checkboxes"></div>
     </details>
+
     <details id="filter-toggle">
       <summary>Filters</summary>
       <div id="filter-inputs"></div>
     </details>
+
     <div id="loading" class="loading">Loading...</div>
     <div id="error" class="error" style="display:none;"></div>
+
     <div class="table-wrapper">
-      <table id="data-table">
-        <thead id="table-head"></thead>
-        <tbody id="table-body"></tbody>
-      </table>
+      <div class="table-scroll-container">
+        <table id="data-table">
+          <thead id="table-head"></thead>
+          <tbody id="table-body"></tbody>
+        </table>
+      </div>
     </div>
   </main>
+
   <script src="app.js"></script>
   <script>
     // Setup logout button and user info
@@ -45,7 +54,7 @@
           Auth.logout();
         });
       }
-      
+
       Auth.getCurrentUser().then(function(user) {
         var emailEl = document.getElementById('user-email');
         if (emailEl && user) {
