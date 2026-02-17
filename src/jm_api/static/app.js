@@ -6,7 +6,6 @@ var Auth = {
   tokenExpiry: null,
   refreshPromise: null,
   user: null,
-  allowedRedirectPaths: ['/index.html', '/table.html', '/create.html', '/edit.html'],
 
   // Initialize auth state from storage
   init: function() {
@@ -187,16 +186,16 @@ var Auth = {
       
       return fetch(url, options);
     }).then(function(response) {
-      // Handle 401 by attempting refresh once (using refreshPromise for deduplication)
+      // Handle 401 by attempting refresh once
       if (response.status === 401) {
+        // Force a refresh by clearing token and calling refreshToken directly
         self.accessToken = null;
-        // Use getAccessToken which handles refreshPromise deduplication
-        return self.getAccessToken().then(function(newToken) {
-          if (!newToken) {
-            return Promise.reject(new Error('Not authenticated'));
-          }
+        return self.refreshToken().then(function(newToken) {
           options.headers['Authorization'] = 'Bearer ' + newToken;
           return fetch(url, options);
+        }).catch(function(err) {
+          self.logout();
+          return Promise.reject(new Error('Not authenticated'));
         });
       }
       return response;
@@ -495,7 +494,7 @@ function fetchAndRender(params) {
   var loadingEl = document.getElementById("loading");
   if (loadingEl) loadingEl.style.display = "block";
 
-  fetch(url)
+  Auth.fetchWithAuth(url)
     .then(function (response) {
       if (!response.ok) {
         throw new Error("HTTP " + response.status);
@@ -856,8 +855,8 @@ function initAuthHeader() {
  * Dashboard page initialization
  */
 function initDashboardPage() {
-  // Initialize common auth header
-  initAuthHeader();
+  // Auth header already initialized by caller (Auth.requireAuth().then())
+  // Page-specific initialization can go here
 }
 
 /**
