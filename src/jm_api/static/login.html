@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Admin</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <div class="auth-container">
+      <h1>Admin Login</h1>
+      
+      <form id="login-form">
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" required placeholder="Enter your email">
+        </div>
+        
+        <div class="form-group">
+          <label for="password">Password</label>
+          <input type="password" id="password" name="password" required placeholder="Enter your password">
+        </div>
+        
+        <div class="form-group remember-me">
+          <label class="checkbox-label">
+            <input type="checkbox" id="remember-me" name="remember-me">
+            <span>Remember me</span>
+          </label>
+        </div>
+        
+        <div id="error" class="error" style="display: none;"></div>
+        
+        <button type="submit" class="btn btn-primary btn-block" id="login-btn">
+          <span class="btn-text">Sign In</span>
+          <span class="btn-spinner" style="display: none;">
+            <svg class="spinner" viewBox="0 0 50 50">
+              <circle class="path" cx="25" cy="25" r="20" fill="none" stroke-width="5"></circle>
+            </svg>
+          </span>
+        </button>
+      </form>
+      
+      <div class="auth-links">
+        <p>Don't have an account? <a href="signup.html">Sign up</a></p>
+      </div>
+    </div>
+  </main>
+  
+  <script>
+    // Auth module for login page
+    (function() {
+      var accessToken = null;
+      var tokenExpiry = null;
+      var refreshPromise = null;
+      
+      // DOM elements
+      var loginForm = document.getElementById('login-form');
+      var emailInput = document.getElementById('email');
+      var passwordInput = document.getElementById('password');
+      var rememberMeCheckbox = document.getElementById('remember-me');
+      var errorEl = document.getElementById('error');
+      var loginBtn = document.getElementById('login-btn');
+      var btnText = loginBtn.querySelector('.btn-text');
+      var btnSpinner = loginBtn.querySelector('.btn-spinner');
+      
+      // Redirect if already authenticated
+      checkAuthStatus().then(function(authenticated) {
+        if (authenticated) {
+          redirectAfterLogin();
+        }
+      });
+      
+      // Form submission handler
+      loginForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        clearError();
+        
+        var email = emailInput.value.trim();
+        var password = passwordInput.value;
+        var rememberMe = rememberMeCheckbox.checked;
+        
+        // Client-side validation
+        if (!validateEmail(email)) {
+          showError('Please enter a valid email address');
+          emailInput.focus();
+          return;
+        }
+        
+        if (password.length < 1) {
+          showError('Password is required');
+          passwordInput.focus();
+          return;
+        }
+        
+        // Set loading state
+        setLoading(true);
+        
+        // Call login API
+        login(email, password, rememberMe)
+          .then(function(response) {
+            setLoading(false);
+            storeTokens(response, rememberMe);
+            redirectAfterLogin();
+          })
+          .catch(function(err) {
+            setLoading(false);
+            handleLoginError(err);
+          });
+      });
+      
+      // Check if user is already authenticated
+      function checkAuthStatus() {
+        var storedToken = sessionStorage.getItem('access_token') || localStorage.getItem('access_token');
+        if (!storedToken) {
+          return Promise.resolve(false);
+        }
+        
+        accessToken = storedToken;
+        
+        return fetch('/api/v1/auth/me', {
+          headers: {
+            'Authorization': 'Bearer ' + accessToken
+          }
+        })
+        .then(function(response) {
+          return response.ok;
+        })
+        .catch(function() {
+          return false;
+        });
+      }
+      
+      // Login API call
+      function login(email, password, rememberMe) {
+        var body = {
+          email: email,
+          password: password
+        };
+        
+        // Add remember me option to extend token lifetime
+        if (rememberMe) {
+          body.remember_me = true;
+        }
+        
+        return fetch('/api/v1/auth/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(body)
+        })
+        .then(function(response) {
+          if (!response.ok) {
+            return response.json().then(function(err) {
+              throw new Error(err.detail || 'Login failed');
+            }).catch(function() {
+              throw new Error('Login failed. Please check your credentials.');
+            });
+          }
+          return response.json();
+        });
+      }
+      
+      // Store tokens securely
+      function storeTokens(response, rememberMe) {
+        accessToken = response.access_token;
+        tokenExpiry = Date.now() + (response.expires_in * 1000);
+        
+        // Store in sessionStorage by default, localStorage if remember me
+        var storage = rememberMe ? localStorage : sessionStorage;
+        storage.setItem('access_token', accessToken);
+        storage.setItem('token_expiry', tokenExpiry.toString());
+        storage.setItem('remember_me', rememberMe ? 'true' : 'false');
+      }
+      
+      // Redirect after successful login
+      function redirectAfterLogin() {
+        // Check for redirect URL in query params
+        var params = new URLSearchParams(window.location.search);
+        var redirectTo = params.get('redirect') || 'index.html';
+        window.location.href = decodeURIComponent(redirectTo);
+      }
+      
+      // Handle login errors
+      function handleLoginError(err) {
+        var message = err.message || 'An error occurred during login';
+        
+        // Handle specific error cases
+        if (message.toLowerCase().includes('invalid')) {
+          showError('Invalid email or password. Please try again.');
+        } else if (err.message === 'Failed to fetch') {
+          showError('Network error. Please check your connection and try again.');
+        } else {
+          showError(message);
+        }
+      }
+      
+      // Show error message
+      function showError(message) {
+        errorEl.textContent = message;
+        errorEl.style.display = 'block';
+      }
+      
+      // Clear error message
+      function clearError() {
+        errorEl.textContent = '';
+        errorEl.style.display = 'none';
+      }
+      
+      // Set loading state
+      function setLoading(loading) {
+        loginBtn.disabled = loading;
+        btnText.style.display = loading ? 'none' : 'inline';
+        btnSpinner.style.display = loading ? 'inline-block' : 'none';
+      }
+      
+      // Validate email format
+      function validateEmail(email) {
+        var re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        return re.test(email);
+      }
+    })();
+  </script>
+</body>
+</html>

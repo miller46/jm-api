@@ -1,6 +1,187 @@
 const TABLES = ["bots"];
 
-// Encapsulated table page state — avoids fragile module-level mutable globals
+// ============ AUTH MODULE ============
+var Auth = {
+  accessToken: null,
+  tokenExpiry: null,
+  refreshPromise: null,
+  user: null,
+
+  // Initialize auth state from storage
+  init: function() {
+    var storage = this.getStorage();
+    this.accessToken = storage.getItem('access_token');
+    var expiryStr = storage.getItem('token_expiry');
+    this.tokenExpiry = expiryStr ? parseInt(expiryStr, 10) : null;
+  },
+
+  // Get appropriate storage based on remember me preference
+  getStorage: function() {
+    var useLocal = localStorage.getItem('remember_me') === 'true';
+    return useLocal ? localStorage : sessionStorage;
+  },
+
+  // Check if user is authenticated
+  isAuthenticated: function() {
+    return !!this.accessToken;
+  },
+
+  // Check if token is expired or about to expire (within 5 minutes)
+  isTokenExpired: function() {
+    if (!this.tokenExpiry) return true;
+    return Date.now() >= (this.tokenExpiry - 5 * 60 * 1000);
+  },
+
+  // Get valid access token, refreshing if necessary
+  getAccessToken: function() {
+    var self = this;
+    
+    if (!this.accessToken) {
+      return Promise.resolve(null);
+    }
+
+    if (!this.isTokenExpired()) {
+      return Promise.resolve(this.accessToken);
+    }
+
+    // Token expired, need to refresh
+    if (this.refreshPromise) {
+      return this.refreshPromise;
+    }
+
+    this.refreshPromise = this.refreshToken().then(function(token) {
+      self.refreshPromise = null;
+      return token;
+    }).catch(function(err) {
+      self.refreshPromise = null;
+      self.logout();
+      return Promise.reject(err);
+    });
+
+    return this.refreshPromise;
+  },
+
+  // Refresh access token using httpOnly cookie
+  refreshToken: function() {
+    var self = this;
+    
+    return fetch('/api/v1/auth/refresh', {
+      method: 'POST',
+      credentials: 'same-origin'
+    })
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('Refresh failed');
+      }
+      return response.json();
+    })
+    .then(function(data) {
+      self.accessToken = data.access_token;
+      self.tokenExpiry = Date.now() + (data.expires_in * 1000);
+      
+      var storage = self.getStorage();
+      storage.setItem('access_token', self.accessToken);
+      storage.setItem('token_expiry', self.tokenExpiry.toString());
+      
+      return self.accessToken;
+    });
+  },
+
+  // Fetch with automatic auth header and token refresh
+  fetchWithAuth: function(url, options) {
+    var self = this;
+    options = options || {};
+    
+    return this.getAccessToken().then(function(token) {
+      if (!token) {
+        return Promise.reject(new Error('Not authenticated'));
+      }
+      
+      options.headers = options.headers || {};
+      options.headers['Authorization'] = 'Bearer ' + token;
+      
+      return fetch(url, options);
+    }).then(function(response) {
+      // Handle 401 by attempting refresh once
+      if (response.status === 401) {
+        self.accessToken = null;
+        return self.refreshToken().then(function(newToken) {
+          options.headers['Authorization'] = 'Bearer ' + newToken;
+          return fetch(url, options);
+        });
+      }
+      return response;
+    });
+  },
+
+  // Get current user info
+  getCurrentUser: function() {
+    var self = this;
+    
+    if (this.user) {
+      return Promise.resolve(this.user);
+    }
+    
+    return this.fetchWithAuth('/api/v1/auth/me')
+      .then(function(response) {
+        if (!response.ok) {
+          throw new Error('Failed to get user info');
+        }
+        return response.json();
+      })
+      .then(function(user) {
+        self.user = user;
+        return user;
+      });
+  },
+
+  // Logout and clear storage
+  logout: function() {
+    var self = this;
+    
+    // Call logout endpoint to revoke refresh token
+    fetch('/api/v1/auth/logout', {
+      method: 'POST',
+      credentials: 'same-origin'
+    }).finally(function() {
+      // Clear local state regardless of server response
+      self.accessToken = null;
+      self.tokenExpiry = null;
+      self.user = null;
+      
+      // Clear all storage
+      sessionStorage.removeItem('access_token');
+      sessionStorage.removeItem('token_expiry');
+      sessionStorage.removeItem('remember_me');
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('token_expiry');
+      localStorage.removeItem('remember_me');
+      
+      // Redirect to login
+      var currentPath = encodeURIComponent(window.location.pathname + window.location.search);
+      window.location.href = 'login.html?redirect=' + currentPath;
+    });
+  },
+
+  // Require authentication - redirect to login if not authenticated
+  requireAuth: function() {
+    var self = this;
+    
+    return this.getAccessToken().then(function(token) {
+      if (!token) {
+        var currentPath = encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = 'login.html?redirect=' + currentPath;
+        return Promise.reject(new Error('Authentication required'));
+      }
+      return token;
+    });
+  }
+};
+
+// Initialize auth on load
+Auth.init();
+
+// ============ TABLE STATE ============
 var TableState = {
   sortColumn: null,
   sortDirection: null,
@@ -218,8 +399,7 @@ function renderFilterPanel(filterFields) {
 /**
  * Shared helper: fetch data from the API with the given params, update
  * TableState, re-apply current sort (without toggling direction), and
- * re-render the table.  Used by both applyFilters() and clearFilters()
- * to avoid duplicating fetch → parse → sort → render logic.
+ * re-render the table. Uses authenticated fetch.
  */
 function fetchAndRender(params) {
   var url = "/api/v1/" + TableState.table + "?" + params.toString();
@@ -334,14 +514,26 @@ function clearFilters() {
 }
 
 document.addEventListener("DOMContentLoaded", function () {
-  // Detect which page we're on
-  if (document.getElementById("data-table")) {
-    initTablePage();
-  } else if (document.getElementById("edit-form")) {
-    initEditPage();
-  } else if (document.getElementById("create-form")) {
-    initCreatePage();
+  // Don't require auth on login or signup pages
+  if (document.getElementById("login-form") || document.getElementById("signup-form")) {
+    return;
   }
+  
+  // Require auth for all other pages, then dispatch to appropriate init
+  Auth.requireAuth().then(function() {
+    // Detect which page we're on and call appropriate init function
+    if (document.getElementById("data-table")) {
+      initTablePage();
+    } else if (document.getElementById("edit-form")) {
+      initEditPage();
+    } else if (document.getElementById("create-form")) {
+      initCreatePage();
+    } else if (document.getElementById("dashboard-page")) {
+      initDashboardPage();
+    }
+  }).catch(function() {
+    // Redirect handled by requireAuth
+  });
 });
 
 function initTablePage() {
@@ -367,13 +559,13 @@ function initTablePage() {
   const loadingEl = document.getElementById("loading");
   const errorEl = document.getElementById("error");
 
-  // Fetch data and OpenAPI spec in parallel
+  // Fetch data and OpenAPI spec in parallel using authenticated requests
   Promise.all([
-    fetch("/api/v1/" + table + "?per_page=20").then(function (r) {
+    Auth.fetchWithAuth("/api/v1/" + table + "?per_page=20").then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     }),
-    fetch("/openapi.json").then(function (r) {
+    Auth.fetchWithAuth("/openapi.json").then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     })
@@ -559,13 +751,13 @@ function initEditPage() {
     backLink.href = "table.html?table=" + encodeURIComponent(table);
   }
 
-  // Fetch the existing record and field schema, then render form
+  // Fetch the existing record and field schema using authenticated requests
   Promise.all([
-    fetch("/api/v1/" + table + "/" + id).then(function (r) {
+    Auth.fetchWithAuth("/api/v1/" + table + "/" + id).then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     }),
-    fetch("/openapi.json").then(function (r) {
+    Auth.fetchWithAuth("/openapi.json").then(function (r) {
       if (!r.ok) throw new Error("HTTP " + r.status);
       return r.json();
     }),
@@ -625,7 +817,7 @@ function renderEditForm(table, id, fields, record) {
   deleteBtn.textContent = "Delete";
   deleteBtn.addEventListener("click", function () {
     if (confirm("Are you sure you want to delete this record?")) {
-      fetch("/api/v1/" + table + "/" + id, { method: "DELETE" })
+      Auth.fetchWithAuth("/api/v1/" + table + "/" + id, { method: "DELETE" })
         .then(function (response) {
           if (!response.ok) {
             return response.json().then(function (err) {
@@ -668,7 +860,7 @@ function submitEditForm(table, id, fields) {
     }
   }
 
-  fetch("/api/v1/" + table + "/" + id, {
+  Auth.fetchWithAuth("/api/v1/" + table + "/" + id, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -701,9 +893,8 @@ function initCreatePage() {
     titleEl.textContent = "Create " + table + " Record";
   }
 
-  // Discover create-schema fields from the OpenAPI spec.
-  // This avoids hardcoding auto-fields and works even when the table is empty.
-  fetch("/openapi.json")
+  // Discover create-schema fields from the OpenAPI spec using authenticated fetch
+  Auth.fetchWithAuth("/openapi.json")
     .then(function (response) {
       if (!response.ok) {
         throw new Error("HTTP " + response.status);
@@ -807,7 +998,7 @@ function submitCreateForm(table, fields) {
     }
   }
 
-  fetch("/api/v1/" + table, {
+  Auth.fetchWithAuth("/api/v1/" + table, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
