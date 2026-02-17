@@ -1,5 +1,7 @@
 # JM API
 
+[![Integration Tests](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml/badge.svg?branch=main)](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml)
+
 A modular FastAPI service backed by SQLAlchemy.
 
 ## Quickstart
