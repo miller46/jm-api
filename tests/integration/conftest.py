@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from jm_api.core.config import get_settings
 from jm_api.db.base import Base
+from jm_api.models.session_token import SessionToken as _SessionToken  # noqa: F401
 
 _SQLITE_PATH = Path("/tmp/jm_integration_test.db")
 _DATABASE_URL = f"sqlite:///{_SQLITE_PATH}"

@@ -14,8 +14,10 @@ from jm_api.api.deps import (
     create_refresh_token,
     decode_token,
     get_current_user,
+    get_refresh_token_jti,
     hash_password,
     is_refresh_token_revoked,
+    persist_refresh_token,
     revoke_refresh_token,
     verify_password,
 )
@@ -76,6 +78,7 @@ def login(
 
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
+    persist_refresh_token(db, refresh_token)
 
     settings = get_settings()
     logger.info(
@@ -174,7 +177,7 @@ def refresh_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if is_refresh_token_revoked(token):
+    if is_refresh_token_revoked(db, token):
         logger.warning(
             "auth.refresh.failed",
             reason="refresh_token_revoked",
@@ -230,9 +233,11 @@ def refresh_token(
         )
 
     settings = get_settings()
+    old_jti = get_refresh_token_jti(token)
     new_access_token = create_access_token(user.id)
     new_refresh_token = create_refresh_token(user.id)
-    revoke_refresh_token(token)
+    revoke_refresh_token(db, token)
+    persist_refresh_token(db, new_refresh_token, rotated_from_jti=old_jti)
 
     response.set_cookie(
         key="refresh_token",
@@ -262,10 +267,11 @@ def logout(
     request: Request,
     response: Response,
     refresh_token_cookie: str | None = Cookie(None, alias="refresh_token"),
+    db: Session = Depends(get_db),
 ) -> None:
     """Logout user by revoking refresh token and clearing the refresh-token cookie."""
     if refresh_token_cookie is not None:
-        revoke_refresh_token(refresh_token_cookie)
+        revoke_refresh_token(db, refresh_token_cookie)
 
     logger.info(
         "auth.logout.success",
