@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from jm_api.api.deps import require_admin
 
 from jm_api.api.generic import (
     create_create_router,
@@ -59,6 +61,6 @@ _delete_router = create_delete_router(
 
 router = APIRouter()
 router.include_router(_read_router)
-router.include_router(_create_router)
-router.include_router(_update_router)
-router.include_router(_delete_router)
+router.include_router(_create_router, dependencies=[Depends(require_admin)])
+router.include_router(_update_router, dependencies=[Depends(require_admin)])
+router.include_router(_delete_router, dependencies=[Depends(require_admin)])
