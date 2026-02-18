@@ -92,10 +92,10 @@ Assuming local server at `http://localhost:8000` and default API prefix `/api/v1
 ### Bot endpoints
 
 - `GET /api/v1/bots`
-- `POST /api/v1/bots`
+- `POST /api/v1/bots` *(admin only)*
 - `GET /api/v1/bots/{bot_id}`
-- `PUT /api/v1/bots/{bot_id}`
-- `DELETE /api/v1/bots/{bot_id}`
+- `PUT /api/v1/bots/{bot_id}` *(admin only)*
+- `DELETE /api/v1/bots/{bot_id}` *(admin only)*
 
 `GET /api/v1/bots` supports:
 
