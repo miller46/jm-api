@@ -23,23 +23,5 @@
     <form id="edit-form"></form>
   </main>
   <script src="app.js"></script>
-  <script>
-    // Setup logout button and user info
-    document.addEventListener('DOMContentLoaded', function() {
-      var logoutBtn = document.getElementById('logout-btn');
-      if (logoutBtn) {
-        logoutBtn.addEventListener('click', function() {
-          Auth.logout();
-        });
-      }
-      
-      Auth.getCurrentUser().then(function(user) {
-        var emailEl = document.getElementById('user-email');
-        if (emailEl && user) {
-          emailEl.textContent = user.email;
-        }
-      });
-    });
-  </script>
 </body>
 </html>
