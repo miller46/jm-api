@@ -169,9 +169,9 @@ class TestMeEndpoint:
         assert data["is_active"] is True
         assert data["is_admin"] is False
 
-    def test_get_me_no_token(self, app) -> None:
+    def test_get_me_no_token(self, client: TestClient) -> None:
         """Test getting user info without token returns 401."""
-        response = TestClient(app).get("/api/v1/auth/me")
+        response = client.get("/api/v1/auth/me")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_get_me_invalid_token(self, client: TestClient) -> None:

@@ -190,3 +190,4 @@ def require_admin(current_user: User = Depends(get_current_active_user)) -> User
 
 
 require_auth = get_current_active_user
+ADMIN_ONLY = [Depends(require_admin)]

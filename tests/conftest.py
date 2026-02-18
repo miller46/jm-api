@@ -87,22 +87,9 @@ def app(db_engine, db_session: Session) -> FastAPI:
 
 
 @pytest.fixture
-def client(app: FastAPI, db_session: Session) -> TestClient:
-    """Create test client authenticated as an admin by default."""
-    admin = User(
-        email="default-admin@example.com",
-        password_hash=hash_password("password123"),
-        is_active=True,
-        is_admin=True,
-    )
-    db_session.add(admin)
-    db_session.commit()
-    db_session.refresh(admin)
-
-    token = create_access_token(admin.id)
-    client = TestClient(app)
-    client.headers.update({"Authorization": f"Bearer {token}"})
-    return client
+def client(app: FastAPI) -> TestClient:
+    """Create an unauthenticated test client by default."""
+    return TestClient(app)
 
 
 @pytest.fixture
