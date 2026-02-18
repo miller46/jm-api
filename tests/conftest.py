@@ -8,8 +8,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from jm_api.api.deps import create_access_token, hash_password
 from jm_api.db.base import Base
 from jm_api.models.bot import Bot
+from jm_api.models.user import User
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -86,7 +88,7 @@ def app(db_engine, db_session: Session) -> FastAPI:
 
 @pytest.fixture
 def client(app: FastAPI) -> TestClient:
-    """Create test client."""
+    """Create unauthenticated test client by default."""
     return TestClient(app)
 
 
@@ -145,3 +147,43 @@ def bot_factory(db_session: Session):
         return bot
 
     return _create_bot
+
+
+@pytest.fixture
+def user_factory(db_session: Session):
+    """Factory fixture for creating users in tests."""
+
+    def _create_user(
+        email: str = "user@example.com",
+        password: str = "password123",
+        is_admin: bool = False,
+        is_active: bool = True,
+    ) -> User:
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            is_active=is_active,
+            is_admin=is_admin,
+        )
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+        return user
+
+    return _create_user
+
+
+@pytest.fixture
+def admin_headers(user_factory) -> dict[str, str]:
+    """Authorization header for an admin user."""
+    admin = user_factory(email="admin@example.com", is_admin=True)
+    token = create_access_token(admin.id)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def user_headers(user_factory) -> dict[str, str]:
+    """Authorization header for a non-admin user."""
+    user = user_factory(email="member@example.com", is_admin=False)
+    token = create_access_token(user.id)
+    return {"Authorization": f"Bearer {token}"}
