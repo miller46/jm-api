@@ -1,7 +1,5 @@
 """RBAC tests for bots CRUD write endpoints."""
 
-from __future__ import annotations
-
 from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 

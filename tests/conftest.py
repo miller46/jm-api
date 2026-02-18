@@ -88,7 +88,7 @@ def app(db_engine, db_session: Session) -> FastAPI:
 
 @pytest.fixture
 def client(app: FastAPI) -> TestClient:
-    """Create an unauthenticated test client by default."""
+    """Create unauthenticated test client by default."""
     return TestClient(app)
 
 
