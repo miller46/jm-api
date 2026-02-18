@@ -14,35 +14,27 @@
       <button class="btn-logout" id="logout-btn">Logout</button>
     </div>
   </header>
-  
+
   <main id="dashboard-page">
-    <ul id="table-list">
-      <li><a href="table.html?table=bots">bots</a></li>
+    <details class="table-visibility-controls" id="table-visibility-toggle">
+      <summary>Table Visibility</summary>
+      <div id="table-checkboxes">
+        <span class="loading">Loading tables...</span>
+      </div>
+    </details>
+
+    <div id="tables-loading" class="tables-loading" style="display: block;">
+      Loading tables...
+    </div>
+
+    <div id="error" class="error" style="display:none;"></div>
+
+    <ul id="tables-list">
+      <!-- Tables will be dynamically loaded here -->
+      <li data-table="bots"><a href="table.html?table=bots"><span class="table-name">bots</span><span class="table-arrow">&rarr;</span></a></li>
     </ul>
   </main>
-  
+
   <script src="app.js"></script>
-  <script>
-    // Dashboard-specific initialization
-    function initDashboardPage() {
-      // Load and display user info
-      Auth.getCurrentUser().then(function(user) {
-        var emailEl = document.getElementById('user-email');
-        if (emailEl && user) {
-          emailEl.textContent = user.email;
-        }
-      }).catch(function() {
-        // User fetch failed, will be redirected by requireAuth
-      });
-      
-      // Setup logout button
-      var logoutBtn = document.getElementById('logout-btn');
-      if (logoutBtn) {
-        logoutBtn.addEventListener('click', function() {
-          Auth.logout();
-        });
-      }
-    }
-  </script>
 </body>
 </html>

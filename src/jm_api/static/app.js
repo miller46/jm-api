@@ -1,3 +1,5 @@
+// Tables configuration - kept for backward compatibility
+// Tables are now dynamically loaded from the API
 const TABLES = ["bots"];
 
 // ============ AUTH MODULE ============
@@ -854,10 +856,341 @@ function initAuthHeader() {
 
 /**
  * Dashboard page initialization
+ * Protected: assigns to window.initDashboardPage to prevent accidental override
  */
-function initDashboardPage() {
+window.initDashboardPage = function initDashboardPage() {
   // Auth header already initialized by caller (Auth.requireAuth().then())
-  // Page-specific initialization can go here
+  // Load tables dynamically
+  loadTablesList();
+};
+
+// Store dashboard tables globally for visibility toggles
+window.dashboardTables = [];
+
+// Load tables from the API and render the list
+function loadTablesList() {
+  var loadingEl = document.getElementById('tables-loading');
+  var errorEl = document.getElementById('error');
+  var listEl = document.getElementById('tables-list');
+
+  // First, try to fetch tables from the OpenAPI spec
+  Auth.fetchWithAuth('/openapi.json')
+    .then(function(response) {
+      if (!response.ok) {
+        throw new Error('Failed to load API spec');
+      }
+      return response.json();
+    })
+    .then(function(spec) {
+      // Extract table names from API paths
+      var tables = extractTablesFromSpec(spec);
+
+      if (loadingEl) loadingEl.style.display = 'none';
+
+      if (tables.length === 0) {
+        showTablesEmptyState(listEl, 'No tables found in the API.');
+        return;
+      }
+
+      // Store tables globally for the toggle functionality
+      window.dashboardTables = tables;
+
+      // Get visible tables now that we know what tables exist
+      var visibleTables = getVisibleTablesFromStorage(tables);
+
+      // Render table visibility toggles
+      renderTableVisibilityToggles(tables, visibleTables);
+
+      // Render the tables list
+      renderTablesList(tables, visibleTables);
+    })
+    .catch(function(err) {
+      if (loadingEl) loadingEl.style.display = 'none';
+      if (errorEl) {
+        errorEl.textContent = 'Failed to load tables: ' + err.message;
+        errorEl.style.display = 'block';
+      }
+      // Fallback to default tables
+      var fallbackTables = ['bots'];
+      window.dashboardTables = fallbackTables;
+      var visibleTables = getVisibleTablesFromStorage(fallbackTables);
+      renderTableVisibilityToggles(fallbackTables, visibleTables);
+      renderTablesList(fallbackTables, visibleTables);
+    });
+}
+
+// Extract table names from OpenAPI spec paths
+function extractTablesFromSpec(spec) {
+  var tables = [];
+  var seen = {};
+
+  if (!spec.paths) return tables;
+
+  for (var path in spec.paths) {
+    if (spec.paths.hasOwnProperty(path)) {
+      // Look for paths like /api/v1/{table}
+      var match = path.match(/^\/api\/v1\/([a-zA-Z_][a-zA-Z0-9_]*)$/);
+      if (match) {
+        var tableName = match[1];
+        if (!seen[tableName]) {
+          seen[tableName] = true;
+          tables.push(tableName);
+        }
+      }
+    }
+  }
+
+  // Sort alphabetically
+  tables.sort();
+  return tables;
+}
+
+// Render the table visibility toggle checkboxes
+function renderTableVisibilityToggles(tables, visibleTables) {
+  var container = document.getElementById('table-checkboxes');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  // "Show All" button
+  var showAllBtn = document.createElement('button');
+  showAllBtn.type = 'button';
+  showAllBtn.className = 'btn btn-secondary';
+  showAllBtn.textContent = 'Show All';
+  showAllBtn.style.marginRight = '1rem';
+  showAllBtn.style.marginBottom = '0.5rem';
+  showAllBtn.addEventListener('click', function() {
+    setAllTablesVisibility(true);
+  });
+  container.appendChild(showAllBtn);
+
+  // "Hide All" button
+  var hideAllBtn = document.createElement('button');
+  hideAllBtn.type = 'button';
+  hideAllBtn.className = 'btn btn-secondary';
+  hideAllBtn.textContent = 'Hide All';
+  hideAllBtn.style.marginRight = '1rem';
+  hideAllBtn.style.marginBottom = '0.5rem';
+  hideAllBtn.addEventListener('click', function() {
+    setAllTablesVisibility(false);
+  });
+  container.appendChild(hideAllBtn);
+
+  // Separator
+  var separator = document.createElement('div');
+  separator.style.width = '100%';
+  separator.style.marginBottom = '0.5rem';
+  container.appendChild(separator);
+
+  // Individual table checkboxes
+  for (var i = 0; i < tables.length; i++) {
+    var tableName = tables[i];
+    var isVisible = visibleTables[tableName] !== false; // default to true
+
+    var label = document.createElement('label');
+
+    var checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = isVisible;
+    checkbox.setAttribute('data-table', tableName);
+    checkbox.addEventListener('change', function() {
+      var table = this.getAttribute('data-table');
+      toggleTableVisibility(table, this.checked);
+    });
+
+    label.appendChild(checkbox);
+    label.appendChild(document.createTextNode(' ' + tableName));
+    container.appendChild(label);
+  }
+}
+
+// Render the tables list
+function renderTablesList(tables, visibleTables) {
+  var listEl = document.getElementById('tables-list');
+  if (!listEl) return;
+
+  listEl.innerHTML = '';
+
+  var hasVisibleTables = false;
+
+  for (var i = 0; i < tables.length; i++) {
+    var tableName = tables[i];
+    var isVisible = visibleTables[tableName] !== false; // default to true
+
+    var li = document.createElement('li');
+    li.setAttribute('data-table', tableName);
+    if (!isVisible) {
+      li.className = 'table-hidden';
+    } else {
+      hasVisibleTables = true;
+    }
+
+    var link = document.createElement('a');
+    link.href = 'table.html?table=' + encodeURIComponent(tableName);
+
+    var nameSpan = document.createElement('span');
+    nameSpan.className = 'table-name';
+    nameSpan.textContent = tableName;
+
+    var arrowSpan = document.createElement('span');
+    arrowSpan.className = 'table-arrow';
+    arrowSpan.innerHTML = '&rarr;';
+
+    link.appendChild(nameSpan);
+    link.appendChild(arrowSpan);
+    li.appendChild(link);
+    listEl.appendChild(li);
+  }
+
+  if (!hasVisibleTables) {
+    showTablesEmptyState(listEl, 'All tables are hidden. Use "Table Visibility" above to show tables.');
+  }
+}
+
+// Show empty state message
+function showTablesEmptyState(container, message) {
+  container.innerHTML = '';
+  var div = document.createElement('div');
+  div.className = 'tables-empty-state';
+  var p = document.createElement('p');
+  p.textContent = message;
+  div.appendChild(p);
+  container.appendChild(div);
+}
+
+// Get visible tables from localStorage or URL params
+function getVisibleTablesFromStorage(tables) {
+  var visibleTables = {};
+  var isUrlFilter = false;
+
+  // Check URL params first
+  var params = new URLSearchParams(window.location.search);
+  var tablesParam = params.get('tables');
+
+  if (tablesParam) {
+    // URL format: ?tables=table1,table2,table3
+    isUrlFilter = true;
+    var tableList = tablesParam.split(',');
+    for (var i = 0; i < tableList.length; i++) {
+      var tableName = tableList[i].trim();
+      if (tableName) {
+        visibleTables[tableName] = true;
+      }
+    }
+    // Also save to localStorage for persistence
+    saveVisibleTablesToStorage(visibleTables);
+  } else {
+    // Fall back to localStorage
+    try {
+      var stored = localStorage.getItem('visible_tables');
+      if (stored) {
+        visibleTables = JSON.parse(stored);
+      }
+    } catch (e) {
+      // Ignore parsing errors
+    }
+  }
+
+  // Add explicit visibility for all known tables to handle URL filtering correctly
+  if (tables && tables.length > 0) {
+    for (var j = 0; j < tables.length; j++) {
+      var t = tables[j];
+      // If URL filter is active, only specified tables are visible
+      // Otherwise, default to true if not explicitly set
+      if (!(t in visibleTables)) {
+        visibleTables[t] = isUrlFilter ? false : true;
+      }
+    }
+  }
+
+  return visibleTables;
+}
+
+// Save visible tables to localStorage
+function saveVisibleTablesToStorage(visibleTables) {
+  try {
+    localStorage.setItem('visible_tables', JSON.stringify(visibleTables));
+  } catch (e) {
+    // Ignore storage errors
+  }
+}
+
+// Toggle visibility of a single table
+function toggleTableVisibility(tableName, visible) {
+  var tables = window.dashboardTables || [];
+  var visibleTables = getVisibleTablesFromStorage(tables);
+  visibleTables[tableName] = visible;
+  saveVisibleTablesToStorage(visibleTables);
+
+  // Check if we're in empty state mode (no LI elements)
+  var listEl = document.getElementById('tables-list');
+  var hasListItems = listEl && listEl.querySelector('li[data-table]');
+
+  if (!hasListItems && tables.length > 0) {
+    // Empty state - need to re-render the entire list
+    renderTablesList(tables, visibleTables);
+  } else if (listEl) {
+    // Normal state - update the list item visibility
+    var li = listEl.querySelector('li[data-table="' + tableName + '"]');
+    if (li) {
+      if (visible) {
+        li.classList.remove('table-hidden');
+      } else {
+        li.classList.add('table-hidden');
+      }
+    }
+
+    // Check if all tables are now hidden
+    var visibleItems = listEl.querySelectorAll('li:not(.table-hidden)');
+    if (visibleItems.length === 0) {
+      showTablesEmptyState(listEl, 'All tables are hidden. Use "Table Visibility" above to show tables.');
+    }
+  }
+
+  // Update URL without reloading
+  updateUrlWithVisibleTables(visibleTables);
+}
+
+// Set visibility for all tables
+function setAllTablesVisibility(visible) {
+  var visibleTables = {};
+  var tables = window.dashboardTables || [];
+
+  for (var i = 0; i < tables.length; i++) {
+    visibleTables[tables[i]] = visible;
+  }
+
+  saveVisibleTablesToStorage(visibleTables);
+
+  // Update checkboxes
+  var checkboxes = document.querySelectorAll('#table-checkboxes input[type="checkbox"][data-table]');
+  for (var j = 0; j < checkboxes.length; j++) {
+    checkboxes[j].checked = visible;
+  }
+
+  // Re-render the list
+  renderTablesList(tables, visibleTables);
+
+  // Update URL
+  updateUrlWithVisibleTables(visibleTables);
+}
+
+// Update URL to reflect visible tables
+function updateUrlWithVisibleTables(visibleTables) {
+  var visibleList = [];
+  for (var table in visibleTables) {
+    if (visibleTables.hasOwnProperty(table) && visibleTables[table]) {
+      visibleList.push(table);
+    }
+  }
+
+  var newUrl = window.location.pathname;
+  if (visibleList.length > 0) {
+    newUrl += '?tables=' + visibleList.join(',');
+  }
+
+  // Update URL without reloading
+  window.history.replaceState({}, '', newUrl);
 }
 
 /**
