@@ -9,43 +9,44 @@ import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.orm import Session
 
 from jm_api.core.config import get_settings
 from jm_api.db.session import get_db
+from jm_api.models.session_token import SessionToken
 from jm_api.models.user import User
 from jm_api.schemas.auth import TokenPayload
 
 security = HTTPBearer(auto_error=False)
 
-# In-memory refresh token denylist (token -> exp timestamp)
-_REVOKED_REFRESH_TOKENS: dict[str, int] = {}
+_LAST_SESSION_CLEANUP_AT: datetime | None = None
 
 
-def _prune_expired_revoked_tokens() -> None:
-    now_ts = int(datetime.now(timezone.utc).timestamp())
-    expired_tokens = [token for token, exp in _REVOKED_REFRESH_TOKENS.items() if exp <= now_ts]
-    for token in expired_tokens:
-        _REVOKED_REFRESH_TOKENS.pop(token, None)
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
-def revoke_refresh_token(token: str) -> None:
-    """Revoke a refresh token until it expires."""
-    _prune_expired_revoked_tokens()
-    try:
-        payload = decode_token(token)
-    except HTTPException:
-        return
-
-    if payload.type == "refresh":
-        _REVOKED_REFRESH_TOKENS[token] = payload.exp
+def _normalize_utc(dt: datetime) -> datetime:
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
-def is_refresh_token_revoked(token: str) -> bool:
-    """Check whether a refresh token has been revoked."""
-    _prune_expired_revoked_tokens()
-    return token in _REVOKED_REFRESH_TOKENS
+def _maybe_cleanup_expired_sessions(db: Session) -> None:
+    """Opportunistically cleanup expired session rows at a bounded interval."""
+    global _LAST_SESSION_CLEANUP_AT
+
+    settings = get_settings()
+    now = _utcnow()
+    if _LAST_SESSION_CLEANUP_AT is not None:
+        elapsed = (now - _LAST_SESSION_CLEANUP_AT).total_seconds()
+        if elapsed < settings.session_cleanup_interval_seconds:
+            return
+
+    db.execute(delete(SessionToken).where(SessionToken.expires_at <= now))
+    db.commit()
+    _LAST_SESSION_CLEANUP_AT = now
 
 
 def hash_password(password: str) -> str:
@@ -70,7 +71,7 @@ def create_access_token(user_id: str, expires_delta: timedelta | None = None) ->
     if expires_delta is None:
         expires_delta = timedelta(minutes=settings.jwt_access_token_expire_minutes)
 
-    now = datetime.now(timezone.utc)
+    now = _utcnow()
     expire = now + expires_delta
 
     payload = {
@@ -91,7 +92,7 @@ def create_refresh_token(user_id: str) -> str:
     """Create a JWT refresh token."""
     settings = get_settings()
 
-    now = datetime.now(timezone.utc)
+    now = _utcnow()
     expire = now + timedelta(days=settings.jwt_refresh_token_expire_days)
 
     payload = {
@@ -132,6 +133,82 @@ def decode_token(token: str) -> TokenPayload:
             detail="Invalid token",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+def _decode_refresh_token_payload(token: str) -> TokenPayload:
+    payload = decode_token(token)
+    if payload.type != "refresh" or payload.jti is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token type",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return payload
+
+
+def persist_refresh_token(db: Session, token: str, rotated_from_jti: str | None = None) -> None:
+    """Persist issued refresh token in session store."""
+    payload = _decode_refresh_token_payload(token)
+    issued_at = datetime.fromtimestamp(payload.iat, tz=timezone.utc)
+    expires_at = datetime.fromtimestamp(payload.exp, tz=timezone.utc)
+
+    existing = db.execute(
+        select(SessionToken).where(SessionToken.token_jti == payload.jti)
+    ).scalar_one_or_none()
+    if existing is None:
+        db.add(
+            SessionToken(
+                token_jti=payload.jti,
+                user_id=payload.sub,
+                issued_at=issued_at,
+                expires_at=expires_at,
+                revoked_at=None,
+                rotated_from_jti=rotated_from_jti,
+            )
+        )
+        db.commit()
+
+
+def revoke_refresh_token(db: Session, token: str) -> None:
+    """Mark refresh token as revoked in persistent store."""
+    try:
+        payload = _decode_refresh_token_payload(token)
+    except HTTPException:
+        return
+
+    now = _utcnow()
+    db.execute(
+        update(SessionToken)
+        .where(SessionToken.token_jti == payload.jti)
+        .values(revoked_at=now)
+    )
+    db.commit()
+
+
+def is_refresh_token_revoked(db: Session, token: str) -> bool:
+    """Check whether a refresh token is revoked or unknown in persistent store."""
+    payload = _decode_refresh_token_payload(token)
+    _maybe_cleanup_expired_sessions(db)
+
+    session_token = db.execute(
+        select(SessionToken).where(SessionToken.token_jti == payload.jti)
+    ).scalar_one_or_none()
+
+    if session_token is None:
+        return True
+
+    now = _utcnow()
+    if _normalize_utc(session_token.expires_at) <= now:
+        return True
+
+    return session_token.revoked_at is not None
+
+
+def get_refresh_token_jti(token: str) -> str:
+    """Get refresh token JTI."""
+    payload = _decode_refresh_token_payload(token)
+    assert payload.jti is not None
+    return payload.jti
 
 
 def get_current_user(

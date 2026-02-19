@@ -138,6 +138,31 @@ All settings use the `JM_API_` prefix.
 - `JM_API_JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15`
 - `JM_API_JWT_REFRESH_TOKEN_EXPIRE_DAYS=7`
 
+### Session store settings (refresh-token revocation)
+
+Refresh-token revocation is persisted in PostgreSQL/SQL via the `session_tokens` table.
+
+- `JM_API_SESSION_CLEANUP_INTERVAL_SECONDS=300` (opportunistic cleanup interval in API process)
+
+#### Migration
+
+Apply the SQL migration before deployment:
+
+```bash
+psql "$JM_API_DATABASE_URL" -f ops/migrations/20260218_add_session_tokens.sql
+```
+
+The migration creates a `session_tokens` table with:
+
+- `token_jti` (PK)
+- `user_id`
+- `issued_at`
+- `expires_at`
+- `revoked_at`
+- `rotated_from_jti`
+
+To keep revocation checks fast (<10ms target), ensure indexes from the migration are present.
+
 ### Observability settings
 
 - `JM_API_METRICS_ENABLED=true`
@@ -180,6 +205,7 @@ src/jm_api/
       bots.py          # bot CRUD routes
   models/
     bot.py
+    session_token.py
     user.py
   static/              # /admin frontend assets
 tests/

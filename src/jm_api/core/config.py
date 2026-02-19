@@ -72,6 +72,7 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256")
     jwt_access_token_expire_minutes: int = Field(default=15)
     jwt_refresh_token_expire_days: int = Field(default=7)
+    session_cleanup_interval_seconds: int = Field(default=300)
 
     model_config = SettingsConfigDict(
         env_prefix="JM_API_",

@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from jm_api.api.deps import hash_password, verify_password
+from jm_api.models.session_token import SessionToken
 from jm_api.models.user import User
 
 
@@ -61,7 +62,7 @@ class TestPasswordHashing:
 class TestLoginEndpoint:
     """Test the login endpoint."""
 
-    def test_login_success(self, client: TestClient, test_user: User) -> None:
+    def test_login_success(self, client: TestClient, test_user: User, db_session: Session) -> None:
         """Test successful login returns tokens."""
         response = client.post(
             "/api/v1/auth/login",
@@ -77,6 +78,12 @@ class TestLoginEndpoint:
         assert data["token_type"] == "bearer"
         assert data["expires_in"] == 900  # 15 minutes
         assert "refresh_token" in response.cookies
+
+        refresh_session = db_session.execute(
+            select(SessionToken).where(SessionToken.user_id == test_user.id)
+        ).scalar_one_or_none()
+        assert refresh_session is not None
+        assert refresh_session.revoked_at is None
 
     def test_login_invalid_email(self, client: TestClient, test_user: User) -> None:
         """Test login with invalid email returns 401."""
@@ -205,7 +212,12 @@ class TestRefreshEndpoint:
         assert "refresh_token" in data
         assert data["token_type"] == "bearer"
 
-    def test_refresh_token_from_cookie(self, client: TestClient, test_user: User) -> None:
+    def test_refresh_token_from_cookie(
+        self,
+        client: TestClient,
+        test_user: User,
+        db_session: Session,
+    ) -> None:
         """Test refreshing tokens rotates refresh cookie."""
         # First login to set the cookie
         login_response = client.post(
@@ -225,6 +237,15 @@ class TestRefreshEndpoint:
         assert "refresh_token" in data
         assert data["refresh_token"] != old_refresh_token
         assert client.cookies.get("refresh_token") == data["refresh_token"]
+
+        sessions = db_session.execute(select(SessionToken)).scalars().all()
+        assert len(sessions) == 2
+
+        revoked_old = [s for s in sessions if s.revoked_at is not None]
+        active_new = [s for s in sessions if s.revoked_at is None]
+        assert len(revoked_old) == 1
+        assert len(active_new) == 1
+        assert active_new[0].rotated_from_jti == revoked_old[0].token_jti
 
     def test_refresh_no_token(self, client: TestClient) -> None:
         """Test refresh without token returns 401."""
@@ -258,7 +279,12 @@ class TestLogoutEndpoint:
         response = client.post("/api/v1/auth/logout")
         assert response.status_code == status.HTTP_204_NO_CONTENT
 
-    def test_logout_revokes_current_refresh_token(self, client: TestClient, test_user: User) -> None:
+    def test_logout_revokes_current_refresh_token(
+        self,
+        client: TestClient,
+        test_user: User,
+        db_session: Session,
+    ) -> None:
         """Test logout revokes the refresh token used for the session."""
         login_response = client.post(
             "/api/v1/auth/login",
@@ -271,6 +297,11 @@ class TestLogoutEndpoint:
 
         response = client.post("/api/v1/auth/logout")
         assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        revoked_rows = db_session.execute(
+            select(SessionToken).where(SessionToken.revoked_at.is_not(None))
+        ).scalars().all()
+        assert len(revoked_rows) >= 1
 
         # Try to reuse the revoked token directly
         client.cookies.set("refresh_token", refresh_token)

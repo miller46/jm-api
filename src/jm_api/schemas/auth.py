@@ -72,3 +72,4 @@ class TokenPayload(BaseModel):
     exp: int  # expiration timestamp
     iat: int  # issued at timestamp
     type: str  # "access" or "refresh"
+    jti: str | None = None

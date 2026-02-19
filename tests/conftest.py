@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from jm_api.api.deps import create_access_token, hash_password
 from jm_api.db.base import Base
 from jm_api.models.bot import Bot
+from jm_api.models.session_token import SessionToken as _SessionToken  # noqa: F401
 from jm_api.models.user import User
 
 
