@@ -27,7 +27,7 @@ class LoginRequest(BaseModel):
     """Login request schema."""
 
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=8, max_length=128)
 
     model_config = ConfigDict(
         json_schema_extra={

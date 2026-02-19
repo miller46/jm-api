@@ -9,7 +9,9 @@ import bcrypt
 import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import ValidationError
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from jm_api.core.config import get_settings
@@ -44,9 +46,12 @@ def _maybe_cleanup_expired_sessions(db: Session) -> None:
         if elapsed < settings.session_cleanup_interval_seconds:
             return
 
-    db.execute(delete(SessionToken).where(SessionToken.expires_at <= now))
-    db.commit()
-    _LAST_SESSION_CLEANUP_AT = now
+    try:
+        db.execute(delete(SessionToken).where(SessionToken.expires_at <= now))
+        db.commit()
+        _LAST_SESSION_CLEANUP_AT = now
+    except Exception:
+        db.rollback()
 
 
 def hash_password(password: str) -> str:
@@ -127,7 +132,7 @@ def decode_token(token: str) -> TokenPayload:
             detail="Token has expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except jwt.InvalidTokenError:
+    except (jwt.InvalidTokenError, ValidationError):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
@@ -152,21 +157,27 @@ def persist_refresh_token(db: Session, token: str, rotated_from_jti: str | None 
     issued_at = datetime.fromtimestamp(payload.iat, tz=timezone.utc)
     expires_at = datetime.fromtimestamp(payload.exp, tz=timezone.utc)
 
-    existing = db.execute(
-        select(SessionToken).where(SessionToken.token_jti == payload.jti)
-    ).scalar_one_or_none()
-    if existing is None:
-        db.add(
-            SessionToken(
-                token_jti=payload.jti,
-                user_id=payload.sub,
-                issued_at=issued_at,
-                expires_at=expires_at,
-                revoked_at=None,
-                rotated_from_jti=rotated_from_jti,
-            )
+    db.add(
+        SessionToken(
+            token_jti=payload.jti,
+            user_id=payload.sub,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            revoked_at=None,
+            rotated_from_jti=rotated_from_jti,
         )
+    )
+    try:
         db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token ID collision - retry",
+        )
+    except SQLAlchemyError:
+        db.rollback()
+        raise
 
 
 def revoke_refresh_token(db: Session, token: str) -> None:
@@ -177,12 +188,52 @@ def revoke_refresh_token(db: Session, token: str) -> None:
         return
 
     now = _utcnow()
-    db.execute(
-        update(SessionToken)
-        .where(SessionToken.token_jti == payload.jti)
-        .values(revoked_at=now)
-    )
-    db.commit()
+    try:
+        db.execute(
+            update(SessionToken)
+            .where(SessionToken.token_jti == payload.jti)
+            .values(revoked_at=now)
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+
+def revoke_user_sessions(db: Session, user_id: str) -> None:
+    """Revoke all active refresh sessions for a user (token-reuse hardening)."""
+    now = _utcnow()
+    try:
+        db.execute(
+            update(SessionToken)
+            .where(SessionToken.user_id == user_id)
+            .where(SessionToken.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+
+def consume_refresh_token(db: Session, token: str) -> bool:
+    """Atomically consume (revoke) an active refresh token once."""
+    payload = _decode_refresh_token_payload(token)
+    now = _utcnow()
+
+    try:
+        result = db.execute(
+            update(SessionToken)
+            .where(SessionToken.token_jti == payload.jti)
+            .where(SessionToken.revoked_at.is_(None))
+            .values(revoked_at=now)
+        )
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        raise
+
+    return bool(result.rowcount)
 
 
 def is_refresh_token_revoked(db: Session, token: str) -> bool:
@@ -196,6 +247,13 @@ def is_refresh_token_revoked(db: Session, token: str) -> bool:
 
     if session_token is None:
         return True
+
+    if session_token.user_id != payload.sub:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token mismatch",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     now = _utcnow()
     if _normalize_utc(session_token.expires_at) <= now:

@@ -7,10 +7,12 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from jm_api.api.deps import (
     create_access_token,
+    consume_refresh_token,
     create_refresh_token,
     decode_token,
     get_current_user,
@@ -19,6 +21,7 @@ from jm_api.api.deps import (
     is_refresh_token_revoked,
     persist_refresh_token,
     revoke_refresh_token,
+    revoke_user_sessions,
     verify_password,
 )
 from jm_api.core.config import get_settings
@@ -78,7 +81,19 @@ def login(
 
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
-    persist_refresh_token(db, refresh_token)
+    try:
+        persist_refresh_token(db, refresh_token)
+    except SQLAlchemyError:
+        logger.exception(
+            "auth.login.failed",
+            reason="session_persist_error",
+            user_id=user.id,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service unavailable",
+        )
 
     settings = get_settings()
     logger.info(
@@ -142,7 +157,20 @@ def signup(
     )
 
     db.add(new_user)
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception(
+            "auth.signup.failed",
+            reason="database_error",
+            email=user_data.email,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to create user",
+        )
     db.refresh(new_user)
 
     logger.info(
@@ -177,7 +205,38 @@ def refresh_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if is_refresh_token_revoked(db, token):
+    try:
+        refresh_revoked = is_refresh_token_revoked(db, token)
+    except SQLAlchemyError:
+        logger.exception(
+            "auth.refresh.failed",
+            reason="session_lookup_error",
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service unavailable",
+        )
+
+    if refresh_revoked:
+        # Token replay hardening: if we can decode the token, revoke all active
+        # sessions for that user to force full re-authentication.
+        try:
+            revoked_payload = decode_token(token)
+        except HTTPException:
+            revoked_payload = None
+
+        if revoked_payload is not None and revoked_payload.type == "refresh":
+            try:
+                revoke_user_sessions(db, revoked_payload.sub)
+            except SQLAlchemyError:
+                logger.exception(
+                    "auth.refresh.failed",
+                    reason="replay_containment_error",
+                    user_id=revoked_payload.sub,
+                    request_id=_request_id(request),
+                )
+
         logger.warning(
             "auth.refresh.failed",
             reason="refresh_token_revoked",
@@ -236,8 +295,32 @@ def refresh_token(
     old_jti = get_refresh_token_jti(token)
     new_access_token = create_access_token(user.id)
     new_refresh_token = create_refresh_token(user.id)
-    revoke_refresh_token(db, token)
-    persist_refresh_token(db, new_refresh_token, rotated_from_jti=old_jti)
+    try:
+        token_consumed = consume_refresh_token(db, token)
+        if not token_consumed:
+            logger.warning(
+                "auth.refresh.failed",
+                reason="token_already_consumed",
+                user_id=user.id,
+                request_id=_request_id(request),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token already revoked or consumed",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        persist_refresh_token(db, new_refresh_token, rotated_from_jti=old_jti)
+    except SQLAlchemyError:
+        logger.exception(
+            "auth.refresh.failed",
+            reason="session_rotation_error",
+            user_id=user.id,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service unavailable",
+        )
 
     response.set_cookie(
         key="refresh_token",
@@ -271,7 +354,14 @@ def logout(
 ) -> None:
     """Logout user by revoking refresh token and clearing the refresh-token cookie."""
     if refresh_token_cookie is not None:
-        revoke_refresh_token(db, refresh_token_cookie)
+        try:
+            revoke_refresh_token(db, refresh_token_cookie)
+        except SQLAlchemyError:
+            logger.exception(
+                "auth.logout.failed",
+                reason="session_revoke_error",
+                request_id=_request_id(request),
+            )
 
     logger.info(
         "auth.logout.success",

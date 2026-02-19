@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import jwt
 import pytest
-from fastapi import status
+from fastapi import HTTPException, status
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from jm_api.api.deps import hash_password, verify_password
+from jm_api.api import deps as auth_deps
+from jm_api.api.deps import hash_password, persist_refresh_token, verify_password
+from jm_api.core.config import get_settings
 from jm_api.models.session_token import SessionToken
 from jm_api.models.user import User
 
@@ -148,6 +151,14 @@ class TestLoginEndpoint:
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
+    def test_login_short_password_returns_422(self, client: TestClient) -> None:
+        """Login payload enforces minimum password length."""
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "short"},
+        )
+        assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
 
 class TestMeEndpoint:
     """Test the /me endpoint."""
@@ -258,6 +269,134 @@ class TestRefreshEndpoint:
         client.cookies.set("refresh_token", "invalid_token")
         response = client.post("/api/v1/auth/refresh")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_refresh_malformed_payload_returns_401(
+        self,
+        client: TestClient,
+        test_user: User,
+    ) -> None:
+        """Malformed JWT payload should return 401 and never 500."""
+        settings = get_settings()
+        malformed_refresh = jwt.encode(
+            {
+                "sub": test_user.id,
+                "type": "refresh",
+                "exp": "not-an-int",
+                "iat": "not-an-int",
+            },
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        )
+        client.cookies.set("refresh_token", malformed_refresh)
+        response = client.post("/api/v1/auth/refresh")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_refresh_token_reuse_revokes_all_sessions(
+        self,
+        client: TestClient,
+        test_user: User,
+        db_session: Session,
+    ) -> None:
+        """Reusing a rotated/revoked refresh token revokes all user sessions."""
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        first_refresh = login_response.json()["refresh_token"]
+
+        rotate_response = client.post("/api/v1/auth/refresh")
+        assert rotate_response.status_code == status.HTTP_200_OK
+
+        # Attempt replay with the old token
+        client.cookies.set("refresh_token", first_refresh)
+        replay_response = client.post("/api/v1/auth/refresh")
+        assert replay_response.status_code == status.HTTP_401_UNAUTHORIZED
+
+        active_sessions = db_session.execute(
+            select(SessionToken).where(
+                SessionToken.user_id == test_user.id,
+                SessionToken.revoked_at.is_(None),
+            )
+        ).scalars().all()
+        assert len(active_sessions) == 0
+
+
+class TestSecurityHardening:
+    """Security hardening tests for token/session edge cases."""
+
+    def test_refresh_token_rotation_race_second_consume_fails(
+        self,
+        client: TestClient,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """If token was already consumed concurrently, refresh returns 401."""
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+
+        monkeypatch.setattr("jm_api.api.routes.auth.consume_refresh_token", lambda db, token: False)
+        response = client.post("/api/v1/auth/refresh")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert "consumed" in response.json()["detail"].lower()
+
+    def test_cleanup_errors_are_swallowed(self, db_session: Session) -> None:
+        """Cleanup is opportunistic and should never raise."""
+
+        class FailingSession:
+            def execute(self, *_args, **_kwargs):
+                raise RuntimeError("db lock")
+
+            def commit(self):
+                return None
+
+            def rollback(self):
+                return None
+
+        auth_deps._maybe_cleanup_expired_sessions(FailingSession())
+
+    def test_persist_refresh_token_jti_collision_returns_400(
+        self,
+        db_session: Session,
+        test_user: User,
+    ) -> None:
+        """Duplicate JTI insertion returns a safe 400 response."""
+        token = auth_deps.create_refresh_token(test_user.id)
+        persist_refresh_token(db_session, token)
+
+        with pytest.raises(HTTPException) as exc_info:
+            persist_refresh_token(db_session, token)
+
+        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+        assert "collision" in exc_info.value.detail.lower()
+
+    def test_refresh_token_user_mismatch_returns_401(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        user_factory,
+    ) -> None:
+        """JWT sub must match persisted session user_id."""
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        refresh_token = login_response.json()["refresh_token"]
+        jti = auth_deps.get_refresh_token_jti(refresh_token)
+
+        other_user = user_factory(email="other@example.com")
+        db_session.execute(
+            update(SessionToken)
+            .where(SessionToken.token_jti == jti)
+            .values(user_id=other_user.id)
+        )
+        db_session.commit()
+
+        response = client.post("/api/v1/auth/refresh")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert "mismatch" in response.json()["detail"].lower()
 
 
 class TestLogoutEndpoint:
