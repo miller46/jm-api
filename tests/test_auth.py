@@ -9,8 +9,11 @@ import jwt
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
+import sqlalchemy as sa
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
+
+from jm_api.db.base import Base
 
 from jm_api.api import deps as auth_deps
 from jm_api.api.deps import (
@@ -442,22 +445,39 @@ class TestSecurityHardening:
 
     def test_rotate_refresh_token_allows_only_one_concurrent_consumer(
         self,
-        db_engine,
-        test_user: User,
+        tmp_path,
     ) -> None:
         """Concurrent refresh rotation attempts should allow only one success."""
-        old_token = auth_deps.create_refresh_token(test_user.id)
-        with Session(db_engine) as session:
+        db_path = tmp_path / "rotate-refresh-concurrency.sqlite"
+        engine = sa.create_engine(
+            f"sqlite+pysqlite:///{db_path}",
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+
+        with Session(engine) as session:
+            user = User(
+                email="concurrency@example.com",
+                password_hash=hash_password("securepassword123"),
+                is_active=True,
+                is_admin=False,
+            )
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+            user_id = user.id
+
+            old_token = auth_deps.create_refresh_token(user_id)
             persist_refresh_token(session, old_token)
 
-        session_factory = sessionmaker(bind=db_engine)
+        session_factory = sessionmaker(bind=engine)
 
         def _attempt_rotate() -> bool:
             with session_factory() as thread_session:
                 return auth_deps.rotate_refresh_token(
                     thread_session,
                     old_token,
-                    auth_deps.create_refresh_token(test_user.id),
+                    auth_deps.create_refresh_token(user_id),
                 )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -465,12 +485,13 @@ class TestSecurityHardening:
 
         assert sorted(results) == [False, True]
 
-        with Session(db_engine) as verify_session:
+        with Session(engine) as verify_session:
             sessions = verify_session.execute(select(SessionToken)).scalars().all()
             active_count = sum(token.revoked_at is None for token in sessions)
 
         assert len(sessions) >= 1
         assert active_count >= 1
+        engine.dispose()
 
     def test_unknown_refresh_token_does_not_trigger_global_revoke(
         self,
