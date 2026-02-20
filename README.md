@@ -150,7 +150,7 @@ Refresh-token revocation is persisted in SQL via the `session_tokens` table.
   - `GET /api/v1/auth/sessions`
   - `DELETE /api/v1/auth/sessions/{session_jti}`
   - `POST /api/v1/auth/sessions/revoke-others`
-- **JWT secret rotation**: configure `JM_API_JWT_SIGNING_KEYS` as comma-separated keys. First key signs new JWTs; all configured keys are accepted for verification during rollover.
+- **JWT secret rotation**: configure `JM_API_JWT_SIGNING_KEYS` as comma-separated keys. If set, only these keys are used (first signs new JWTs; all verify during rollover). `JM_API_JWT_SECRET_KEY` is used only when `JM_API_JWT_SIGNING_KEYS` is empty.
 - **Security audit logs**: auth actions emit structured `security.audit` events including `event_type`, `outcome`, `ip`, `user_agent`, and optional risk flags.
 
 - `JM_API_SESSION_CLEANUP_INTERVAL_SECONDS=300` (opportunistic cleanup interval in API process)

@@ -644,6 +644,44 @@ class TestSecurityHardening:
             get_settings.cache_clear()
 
 
+class TestJwtSigningKeyPrecedence:
+    def test_decode_token_uses_only_configured_signing_keys(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("JM_API_JWT_SECRET_KEY", "legacy-secret")
+        monkeypatch.setenv("JM_API_JWT_SIGNING_KEYS", '["primary-key", "secondary-key"]')
+        get_settings.cache_clear()
+
+        try:
+            settings = get_settings()
+            payload = {
+                "sub": "user-1",
+                "type": "access",
+                "iat": 1700000000,
+                "exp": 4102444800,
+            }
+
+            legacy_token = jwt.encode(
+                payload,
+                "legacy-secret",
+                algorithm=settings.jwt_algorithm,
+            )
+            with pytest.raises(auth_deps.HTTPException) as exc_info:
+                auth_deps.decode_token(legacy_token)
+            assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+            rotated_token = jwt.encode(
+                payload,
+                "primary-key",
+                algorithm=settings.jwt_algorithm,
+            )
+            decoded = auth_deps.decode_token(rotated_token)
+            assert decoded.sub == "user-1"
+        finally:
+            get_settings.cache_clear()
+
+
 class TestLogoutEndpoint:
     """Test the logout endpoint."""
 

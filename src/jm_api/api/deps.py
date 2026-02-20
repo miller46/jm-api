@@ -54,11 +54,9 @@ def _normalize_utc(dt: datetime) -> datetime:
 def _get_signing_keys() -> list[str]:
     settings = get_settings()
     keys = [key for key in settings.jwt_signing_keys if key]
-    if not keys:
-        keys = [settings.jwt_secret_key]
-    elif settings.jwt_secret_key not in keys:
-        keys.append(settings.jwt_secret_key)
-    return keys
+    if keys:
+        return keys
+    return [settings.jwt_secret_key]
 
 
 def fingerprint_user_agent(user_agent: str | None) -> str | None:
