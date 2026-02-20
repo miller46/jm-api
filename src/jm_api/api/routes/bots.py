@@ -64,7 +64,11 @@ _delete_router = create_delete_router(
 router = APIRouter()
 router.include_router(_read_router)
 
-_bots_write_admin_only = os.getenv("JM_API_BOTS_WRITE_ADMIN_ONLY", "false").lower() in {"1", "true", "yes", "on"}
+def _env_flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+_bots_write_admin_only = _env_flag("JM_API_BOTS_WRITE_ADMIN_ONLY")
 _write_dependencies = ADMIN_ONLY if _bots_write_admin_only else None
 
 router.include_router(_create_router, dependencies=_write_dependencies)

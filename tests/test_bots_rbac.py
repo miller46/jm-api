@@ -22,3 +22,15 @@ def test_bots_write_toggle_enables_admin_dependency(monkeypatch) -> None:
     bots_module = importlib.reload(bots_module)
 
     assert bots_module._write_dependencies == deps_module.ADMIN_ONLY
+
+
+def test_bots_write_toggle_handles_whitespace_truthy_value(monkeypatch) -> None:
+    """Toggle parser should treat trimmed truthy values as enabled."""
+    monkeypatch.setenv("JM_API_BOTS_WRITE_ADMIN_ONLY", "  TrUe  ")
+
+    import jm_api.api.deps as deps_module
+    import jm_api.api.routes.bots as bots_module
+
+    bots_module = importlib.reload(bots_module)
+
+    assert bots_module._write_dependencies == deps_module.ADMIN_ONLY
