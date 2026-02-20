@@ -2,15 +2,22 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import jwt
 import pytest
-from fastapi import HTTPException, status
+from fastapi import status
 from fastapi.testclient import TestClient
 from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from jm_api.api import deps as auth_deps
-from jm_api.api.deps import hash_password, persist_refresh_token, verify_password
+from jm_api.api.deps import (
+    SessionTokenCollisionError,
+    hash_password,
+    persist_refresh_token,
+    verify_password,
+)
 from jm_api.core.config import get_settings
 from jm_api.models.session_token import SessionToken
 from jm_api.models.user import User
@@ -336,17 +343,112 @@ class TestSecurityHardening:
             json={"email": "test@example.com", "password": "securepassword123"},
         )
 
-        monkeypatch.setattr("jm_api.api.routes.auth.consume_refresh_token", lambda db, token: False)
+        monkeypatch.setattr("jm_api.api.routes.auth.rotate_refresh_token", lambda db, old, new: False)
         response = client.post("/api/v1/auth/refresh")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert "consumed" in response.json()["detail"].lower()
+
+    def test_rotate_refresh_token_allows_only_one_concurrent_consumer(
+        self,
+        db_engine,
+        test_user: User,
+    ) -> None:
+        """Concurrent refresh rotation attempts should allow only one success."""
+        old_token = auth_deps.create_refresh_token(test_user.id)
+        with Session(db_engine) as session:
+            persist_refresh_token(session, old_token)
+
+        session_factory = sessionmaker(bind=db_engine)
+
+        def _attempt_rotate() -> bool:
+            with session_factory() as thread_session:
+                return auth_deps.rotate_refresh_token(
+                    thread_session,
+                    old_token,
+                    auth_deps.create_refresh_token(test_user.id),
+                )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _i: _attempt_rotate(), range(2)))
+
+        assert sorted(results) == [False, True]
+
+        with Session(db_engine) as verify_session:
+            sessions = verify_session.execute(select(SessionToken)).scalars().all()
+            revoked_count = sum(token.revoked_at is not None for token in sessions)
+            active_count = sum(token.revoked_at is None for token in sessions)
+
+        assert len(sessions) == 2
+        assert revoked_count == 1
+        assert active_count == 1
+
+    def test_unknown_refresh_token_does_not_trigger_global_revoke(
+        self,
+        client: TestClient,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Unknown refresh tokens should not revoke all user sessions."""
+        settings = get_settings()
+        unknown_token = jwt.encode(
+            {
+                "sub": test_user.id,
+                "type": "refresh",
+                "exp": 4102444800,
+                "iat": 1700000000,
+                "jti": "unknown-session-jti-123",
+            },
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        )
+        client.cookies.set("refresh_token", unknown_token)
+
+        revoke_called = {"value": False}
+
+        def _mark_revoke(*_args, **_kwargs):
+            revoke_called["value"] = True
+
+        monkeypatch.setattr("jm_api.api.routes.auth.revoke_user_sessions", _mark_revoke)
+
+        response = client.post("/api/v1/auth/refresh")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert revoke_called["value"] is False
+
+    def test_revoked_refresh_token_triggers_global_revoke(
+        self,
+        client: TestClient,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Revoked token replay should trigger user-wide session revocation."""
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        old_token = login_response.json()["refresh_token"]
+
+        # Rotate once so old_token becomes explicitly revoked.
+        rotate_response = client.post("/api/v1/auth/refresh")
+        assert rotate_response.status_code == status.HTTP_200_OK
+
+        calls = {"count": 0}
+
+        def _count_revoke(*_args, **_kwargs):
+            calls["count"] += 1
+
+        monkeypatch.setattr("jm_api.api.routes.auth.revoke_user_sessions", _count_revoke)
+        client.cookies.set("refresh_token", old_token)
+
+        response = client.post("/api/v1/auth/refresh")
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        assert calls["count"] == 1
 
     def test_cleanup_errors_are_swallowed(self, db_session: Session) -> None:
         """Cleanup is opportunistic and should never raise."""
 
         class FailingSession:
             def execute(self, *_args, **_kwargs):
-                raise RuntimeError("db lock")
+                raise auth_deps.SQLAlchemyError("db lock")
 
             def commit(self):
                 return None
@@ -354,6 +456,7 @@ class TestSecurityHardening:
             def rollback(self):
                 return None
 
+        auth_deps._LAST_SESSION_CLEANUP_AT = None
         auth_deps._maybe_cleanup_expired_sessions(FailingSession())
 
     def test_persist_refresh_token_jti_collision_returns_400(
@@ -365,11 +468,8 @@ class TestSecurityHardening:
         token = auth_deps.create_refresh_token(test_user.id)
         persist_refresh_token(db_session, token)
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(SessionTokenCollisionError):
             persist_refresh_token(db_session, token)
-
-        assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
-        assert "collision" in exc_info.value.detail.lower()
 
     def test_refresh_token_user_mismatch_returns_401(
         self,

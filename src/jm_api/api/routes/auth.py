@@ -11,17 +11,18 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from jm_api.api.deps import (
+    RefreshTokenState,
+    SessionTokenCollisionError,
     create_access_token,
-    consume_refresh_token,
     create_refresh_token,
     decode_token,
     get_current_user,
-    get_refresh_token_jti,
+    get_refresh_token_state,
     hash_password,
-    is_refresh_token_revoked,
     persist_refresh_token,
     revoke_refresh_token,
     revoke_user_sessions,
+    rotate_refresh_token,
     verify_password,
 )
 from jm_api.core.config import get_settings
@@ -83,6 +84,17 @@ def login(
     refresh_token = create_refresh_token(user.id)
     try:
         persist_refresh_token(db, refresh_token)
+    except SessionTokenCollisionError:
+        logger.warning(
+            "auth.login.failed",
+            reason="session_token_collision",
+            user_id=user.id,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to establish session",
+        )
     except SQLAlchemyError:
         logger.exception(
             "auth.login.failed",
@@ -206,7 +218,7 @@ def refresh_token(
         )
 
     try:
-        refresh_revoked = is_refresh_token_revoked(db, token)
+        refresh_state = get_refresh_token_state(db, token)
     except SQLAlchemyError:
         logger.exception(
             "auth.refresh.failed",
@@ -218,28 +230,23 @@ def refresh_token(
             detail="Authentication service unavailable",
         )
 
-    if refresh_revoked:
-        # Token replay hardening: if we can decode the token, revoke all active
-        # sessions for that user to force full re-authentication.
-        try:
-            revoked_payload = decode_token(token)
-        except HTTPException:
-            revoked_payload = None
-
-        if revoked_payload is not None and revoked_payload.type == "refresh":
+    if refresh_state != RefreshTokenState.ACTIVE:
+        if refresh_state == RefreshTokenState.REVOKED:
+            # Token replay hardening only on explicit revoked/reuse signal.
             try:
-                revoke_user_sessions(db, revoked_payload.sub)
-            except SQLAlchemyError:
+                revoked_payload = decode_token(token)
+                if revoked_payload.type == "refresh":
+                    revoke_user_sessions(db, revoked_payload.sub)
+            except (HTTPException, SQLAlchemyError):
                 logger.exception(
                     "auth.refresh.failed",
                     reason="replay_containment_error",
-                    user_id=revoked_payload.sub,
                     request_id=_request_id(request),
                 )
 
         logger.warning(
             "auth.refresh.failed",
-            reason="refresh_token_revoked",
+            reason=f"refresh_token_{refresh_state.value}",
             request_id=_request_id(request),
         )
         raise HTTPException(
@@ -292,12 +299,11 @@ def refresh_token(
         )
 
     settings = get_settings()
-    old_jti = get_refresh_token_jti(token)
     new_access_token = create_access_token(user.id)
     new_refresh_token = create_refresh_token(user.id)
     try:
-        token_consumed = consume_refresh_token(db, token)
-        if not token_consumed:
+        rotated = rotate_refresh_token(db, token, new_refresh_token)
+        if not rotated:
             logger.warning(
                 "auth.refresh.failed",
                 reason="token_already_consumed",
@@ -309,7 +315,17 @@ def refresh_token(
                 detail="Token already revoked or consumed",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        persist_refresh_token(db, new_refresh_token, rotated_from_jti=old_jti)
+    except SessionTokenCollisionError:
+        logger.warning(
+            "auth.refresh.failed",
+            reason="session_token_collision",
+            user_id=user.id,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to rotate session",
+        )
     except SQLAlchemyError:
         logger.exception(
             "auth.refresh.failed",
@@ -361,6 +377,10 @@ def logout(
                 "auth.logout.failed",
                 reason="session_revoke_error",
                 request_id=_request_id(request),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication service unavailable",
             )
 
     logger.info(
