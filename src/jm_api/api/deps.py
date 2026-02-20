@@ -13,7 +13,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import ValidationError
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -259,9 +259,19 @@ def rotate_refresh_token(
             .where(SessionToken.revoked_at.is_(None))
         )
         if user_agent_hash is not None:
-            query = query.where(SessionToken.user_agent_hash == user_agent_hash)
+            query = query.where(
+                or_(
+                    SessionToken.user_agent_hash == user_agent_hash,
+                    SessionToken.user_agent_hash.is_(None),
+                )
+            )
         if ip_subnet is not None:
-            query = query.where(SessionToken.ip_subnet == ip_subnet)
+            query = query.where(
+                or_(
+                    SessionToken.ip_subnet == ip_subnet,
+                    SessionToken.ip_subnet.is_(None),
+                )
+            )
 
         result = db.execute(query.values(revoked_at=_utcnow()))
 

@@ -44,6 +44,13 @@ def csrf_headers(client: TestClient) -> dict[str, str]:
     return {"X-CSRF-Token": token}
 
 
+def cookie_expiry(response, name: str) -> int | None:
+    for cookie in response.cookies.jar:
+        if cookie.name == name:
+            return cookie.expires
+    return None
+
+
 class TestPasswordHashing:
     """Test password hashing utilities."""
 
@@ -100,6 +107,24 @@ class TestLoginEndpoint:
         ).scalar_one_or_none()
         assert refresh_session is not None
         assert refresh_session.revoked_at is None
+
+    def test_login_sets_csrf_cookie_ttl_to_refresh_ttl(
+        self,
+        client: TestClient,
+        test_user: User,
+    ) -> None:
+        """CSRF cookie should live as long as refresh cookie to avoid dead-end refresh flows."""
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        refresh_expiry = cookie_expiry(response, "refresh_token")
+        csrf_expiry = cookie_expiry(response, "csrf_token")
+        assert refresh_expiry is not None
+        assert csrf_expiry is not None
+        assert csrf_expiry == refresh_expiry
 
     def test_login_invalid_email(self, client: TestClient, test_user: User) -> None:
         """Test login with invalid email returns 401."""
@@ -504,6 +529,30 @@ class TestSecurityHardening:
         response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert "mismatch" in response.json()["detail"].lower()
+
+    def test_refresh_allows_legacy_session_rows_without_binding_metadata(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+    ) -> None:
+        """Legacy rows with NULL binding metadata should still rotate once."""
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        refresh_token = login_response.json()["refresh_token"]
+        jti = auth_deps.get_refresh_token_jti(refresh_token)
+
+        db_session.execute(
+            update(SessionToken)
+            .where(SessionToken.token_jti == jti)
+            .values(user_agent_hash=None, ip_subnet=None)
+        )
+        db_session.commit()
+
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
+        assert response.status_code == status.HTTP_200_OK
 
 
 class TestLogoutEndpoint:

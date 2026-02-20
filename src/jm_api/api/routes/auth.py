@@ -82,7 +82,7 @@ def _set_auth_cookies(response: Response, refresh_token: str, csrf_token: str) -
         httponly=False,
         secure=secure_cookie,
         samesite="lax",
-        max_age=15 * 60,
+        max_age=ttl,
     )
 
 
