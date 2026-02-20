@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import structlog
+from ipaddress import ip_address
 from secrets import token_urlsafe
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
@@ -60,7 +61,13 @@ def _client_ip(request: Request) -> str | None:
     if settings.trust_proxy_headers:
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
-            return forwarded.split(",")[0].strip()
+            candidate = forwarded.split(",")[0].strip()
+            if candidate:
+                try:
+                    ip_address(candidate)
+                    return candidate
+                except ValueError:
+                    pass
     if request.client:
         return request.client.host
     return None

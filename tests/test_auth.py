@@ -619,6 +619,30 @@ class TestSecurityHardening:
         session = db_session.execute(select(SessionToken)).scalar_one()
         assert session.ip_subnet is None
 
+    def test_login_falls_back_to_client_ip_when_forwarded_ip_invalid(
+        self,
+        client: TestClient,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Invalid X-Forwarded-For should not be used when proxy headers are enabled."""
+        monkeypatch.setenv("JM_API_TRUST_PROXY_HEADERS", "true")
+        get_settings.cache_clear()
+
+        try:
+            response = client.post(
+                "/api/v1/auth/login",
+                json={"email": "test@example.com", "password": "securepassword123"},
+                headers={"X-Forwarded-For": "not-an-ip", "User-Agent": "ua-test"},
+            )
+            assert response.status_code == status.HTTP_200_OK
+            assert '"event": "security.audit"' in caplog.text
+            assert '"ip": "testclient"' in caplog.text
+            assert '"ip": "not-an-ip"' not in caplog.text
+        finally:
+            get_settings.cache_clear()
+
 
 class TestLogoutEndpoint:
     """Test the logout endpoint."""
