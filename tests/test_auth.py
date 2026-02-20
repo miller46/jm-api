@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 import jwt
 import pytest
@@ -315,6 +316,27 @@ class TestRefreshEndpoint:
         assert refresh_expiry is not None
         assert csrf_expiry is not None
         assert csrf_expiry == refresh_expiry
+
+    def test_refresh_still_works_after_more_than_15_minutes_when_session_is_valid(
+        self,
+        client: TestClient,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: CSRF cookie must survive beyond 15 minutes for valid refresh sessions."""
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+
+        base_time = time.time()
+        monkeypatch.setattr("http.cookiejar.time.time", lambda: base_time + (16 * 60))
+
+        assert client.cookies.get("csrf_token") is not None
+        assert client.cookies.get("refresh_token") is not None
+
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
+        assert response.status_code == status.HTTP_200_OK
 
     def test_refresh_no_token(self, client: TestClient) -> None:
         """Test refresh without token returns 401."""
