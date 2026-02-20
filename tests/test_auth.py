@@ -127,6 +127,22 @@ class TestLoginEndpoint:
         assert csrf_expiry is not None
         assert csrf_expiry == refresh_expiry
 
+    def test_login_csrf_cookie_lifetime_exceeds_15_minutes(
+        self,
+        client: TestClient,
+        test_user: User,
+    ) -> None:
+        """Guard against regressions that would expire CSRF before refresh remains valid."""
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        csrf_expiry = cookie_expiry(response, "csrf_token")
+        assert csrf_expiry is not None
+        assert csrf_expiry - int(time.time()) > 15 * 60
+
     def test_login_invalid_email(self, client: TestClient, test_user: User) -> None:
         """Test login with invalid email returns 401."""
         response = client.post(
