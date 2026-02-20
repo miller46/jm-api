@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = Field(default=7)
     session_cleanup_interval_seconds: int = Field(default=300)
     trust_proxy_headers: bool = Field(default=False)
+    bots_write_admin_only: bool = Field(default=False)
 
     model_config = SettingsConfigDict(
         env_prefix="JM_API_",

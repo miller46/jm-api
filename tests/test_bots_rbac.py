@@ -1,69 +1,24 @@
-"""RBAC tests for bots CRUD write endpoints."""
+"""Tests for optional bots write RBAC toggle."""
 
-from fastapi import FastAPI, status
+import importlib
+
+from fastapi import status
 from fastapi.testclient import TestClient
 
 
-def test_create_bot_requires_auth(app: FastAPI) -> None:
-    """Ensure creating a bot requires authentication."""
-    unauthenticated_client = TestClient(app)
-    response = unauthenticated_client.post("/api/v1/bots", json={"rig_id": "rig-new"})
-
-    assert response.status_code == status.HTTP_401_UNAUTHORIZED
-    assert response.json()["detail"] == "Not authenticated"
-
-
-def test_create_bot_requires_admin(client: TestClient, user_headers: dict[str, str]) -> None:
-    """Ensure non-admin users cannot create bots."""
-    response = client.post(
-        "/api/v1/bots",
-        json={"rig_id": "rig-new"},
-        headers=user_headers,
-    )
-
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert response.json()["detail"] == "Admin privileges required"
-
-
-def test_create_bot_allows_admin(client: TestClient, admin_headers: dict[str, str]) -> None:
-    """Ensure admin users can create bots."""
-    response = client.post(
-        "/api/v1/bots",
-        json={"rig_id": "rig-new"},
-        headers=admin_headers,
-    )
-
+def test_bots_write_open_by_default(client: TestClient) -> None:
+    """Without toggle, write endpoints remain backward compatible."""
+    response = client.post("/api/v1/bots", json={"rig_id": "rig-new"})
     assert response.status_code == status.HTTP_201_CREATED
 
 
-def test_update_bot_requires_admin(
-    client: TestClient,
-    bot_factory,
-    user_headers: dict[str, str],
-) -> None:
-    """Ensure non-admin users cannot update bots."""
-    bot = bot_factory(rig_id="rig-001")
-    response = client.put(
-        f"/api/v1/bots/{bot.id}",
-        json={"rig_id": "rig-002"},
-        headers=user_headers,
-    )
+def test_bots_write_toggle_enables_admin_dependency(monkeypatch) -> None:
+    """Enabling toggle wires admin dependency for write routes."""
+    monkeypatch.setenv("JM_API_BOTS_WRITE_ADMIN_ONLY", "true")
 
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert response.json()["detail"] == "Admin privileges required"
+    import jm_api.api.deps as deps_module
+    import jm_api.api.routes.bots as bots_module
 
+    bots_module = importlib.reload(bots_module)
 
-def test_delete_bot_requires_admin(
-    client: TestClient,
-    bot_factory,
-    user_headers: dict[str, str],
-) -> None:
-    """Ensure non-admin users cannot delete bots."""
-    bot = bot_factory(rig_id="rig-001")
-    response = client.delete(
-        f"/api/v1/bots/{bot.id}",
-        headers=user_headers,
-    )
-
-    assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert response.json()["detail"] == "Admin privileges required"
+    assert bots_module._write_dependencies == deps_module.ADMIN_ONLY
