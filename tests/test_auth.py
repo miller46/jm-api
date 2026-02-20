@@ -296,6 +296,26 @@ class TestRefreshEndpoint:
         assert len(active_new) == 1
         assert active_new[0].rotated_from_jti == revoked_old[0].token_jti
 
+    def test_refresh_sets_csrf_cookie_ttl_to_refresh_ttl(
+        self,
+        client: TestClient,
+        test_user: User,
+    ) -> None:
+        """Refresh should keep CSRF cookie TTL aligned with refresh cookie TTL."""
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
+        assert response.status_code == status.HTTP_200_OK
+
+        refresh_expiry = cookie_expiry(response, "refresh_token")
+        csrf_expiry = cookie_expiry(response, "csrf_token")
+        assert refresh_expiry is not None
+        assert csrf_expiry is not None
+        assert csrf_expiry == refresh_expiry
+
     def test_refresh_no_token(self, client: TestClient) -> None:
         """Test refresh without token returns 401."""
         response = client.post("/api/v1/auth/refresh")
