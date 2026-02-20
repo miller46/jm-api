@@ -7,18 +7,22 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from jm_api.api.deps import (
+    RefreshTokenState,
+    SessionTokenCollisionError,
     create_access_token,
     create_refresh_token,
     decode_token,
     get_current_user,
-    get_refresh_token_jti,
+    get_refresh_token_state,
     hash_password,
-    is_refresh_token_revoked,
     persist_refresh_token,
     revoke_refresh_token,
+    revoke_user_sessions,
+    rotate_refresh_token,
     verify_password,
 )
 from jm_api.core.config import get_settings
@@ -78,7 +82,30 @@ def login(
 
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
-    persist_refresh_token(db, refresh_token)
+    try:
+        persist_refresh_token(db, refresh_token)
+    except SessionTokenCollisionError:
+        logger.warning(
+            "auth.login.failed",
+            reason="session_token_collision",
+            user_id=user.id,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to establish session",
+        )
+    except SQLAlchemyError:
+        logger.exception(
+            "auth.login.failed",
+            reason="session_persist_error",
+            user_id=user.id,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service unavailable",
+        )
 
     settings = get_settings()
     logger.info(
@@ -142,7 +169,20 @@ def signup(
     )
 
     db.add(new_user)
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception(
+            "auth.signup.failed",
+            reason="database_error",
+            email=user_data.email,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unable to create user",
+        )
     db.refresh(new_user)
 
     logger.info(
@@ -177,10 +217,36 @@ def refresh_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    if is_refresh_token_revoked(db, token):
+    try:
+        refresh_state = get_refresh_token_state(db, token)
+    except SQLAlchemyError:
+        logger.exception(
+            "auth.refresh.failed",
+            reason="session_lookup_error",
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service unavailable",
+        )
+
+    if refresh_state != RefreshTokenState.ACTIVE:
+        if refresh_state == RefreshTokenState.REVOKED:
+            # Token replay hardening only on explicit revoked/reuse signal.
+            try:
+                revoked_payload = decode_token(token)
+                if revoked_payload.type == "refresh":
+                    revoke_user_sessions(db, revoked_payload.sub)
+            except (HTTPException, SQLAlchemyError):
+                logger.exception(
+                    "auth.refresh.failed",
+                    reason="replay_containment_error",
+                    request_id=_request_id(request),
+                )
+
         logger.warning(
             "auth.refresh.failed",
-            reason="refresh_token_revoked",
+            reason=f"refresh_token_{refresh_state.value}",
             request_id=_request_id(request),
         )
         raise HTTPException(
@@ -233,11 +299,44 @@ def refresh_token(
         )
 
     settings = get_settings()
-    old_jti = get_refresh_token_jti(token)
     new_access_token = create_access_token(user.id)
     new_refresh_token = create_refresh_token(user.id)
-    revoke_refresh_token(db, token)
-    persist_refresh_token(db, new_refresh_token, rotated_from_jti=old_jti)
+    try:
+        rotated = rotate_refresh_token(db, token, new_refresh_token)
+        if not rotated:
+            logger.warning(
+                "auth.refresh.failed",
+                reason="token_already_consumed",
+                user_id=user.id,
+                request_id=_request_id(request),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token already revoked or consumed",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except SessionTokenCollisionError:
+        logger.warning(
+            "auth.refresh.failed",
+            reason="session_token_collision",
+            user_id=user.id,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unable to rotate session",
+        )
+    except SQLAlchemyError:
+        logger.exception(
+            "auth.refresh.failed",
+            reason="session_rotation_error",
+            user_id=user.id,
+            request_id=_request_id(request),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service unavailable",
+        )
 
     response.set_cookie(
         key="refresh_token",
@@ -271,7 +370,18 @@ def logout(
 ) -> None:
     """Logout user by revoking refresh token and clearing the refresh-token cookie."""
     if refresh_token_cookie is not None:
-        revoke_refresh_token(db, refresh_token_cookie)
+        try:
+            revoke_refresh_token(db, refresh_token_cookie)
+        except SQLAlchemyError:
+            logger.exception(
+                "auth.logout.failed",
+                reason="session_revoke_error",
+                request_id=_request_id(request),
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication service unavailable",
+            )
 
     logger.info(
         "auth.logout.success",
