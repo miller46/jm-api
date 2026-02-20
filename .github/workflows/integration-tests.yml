@@ -52,6 +52,17 @@ jobs:
             pip install -e ".[dev]"
           fi
 
+      - name: Validate Alembic migrations
+        run: |
+          export JM_API_DATABASE_URL="sqlite:///./ci_migrations.db"
+          if [ -f uv.lock ]; then
+            uv run alembic upgrade head
+            uv run alembic check
+          else
+            alembic upgrade head
+            alembic check
+          fi
+
       - name: Run integration tests
         run: |
           mkdir -p test-results
