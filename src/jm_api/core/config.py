@@ -18,6 +18,7 @@ class Settings(BaseSettings):
 
     # No default - must be explicitly configured via JM_API_DATABASE_URL env var
     database_url: str = Field()
+    db_migration_check_enabled: bool = Field(default=True)
 
     @model_validator(mode="after")
     def validate_database_url_for_environment(self) -> "Settings":

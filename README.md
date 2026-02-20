@@ -140,28 +140,47 @@ All settings use the `JM_API_` prefix.
 
 ### Session store settings (refresh-token revocation)
 
-Refresh-token revocation is persisted in PostgreSQL/SQL via the `session_tokens` table.
+Refresh-token revocation is persisted in SQL via the `session_tokens` table.
 
 - `JM_API_SESSION_CLEANUP_INTERVAL_SECONDS=300` (opportunistic cleanup interval in API process)
 
-#### Migration
+## Database migrations (Alembic)
 
-Apply the SQL migration before deployment:
+This project uses Alembic for schema migrations.
+
+### Commands
 
 ```bash
-psql "$JM_API_DATABASE_URL" -f ops/migrations/20260218_add_session_tokens.sql
+# Apply all migrations
+make migrate
+
+# Create a new migration from model changes
+make migrate-create msg="describe change"
 ```
 
-The migration creates a `session_tokens` table with:
+You can also run Alembic directly:
 
-- `token_jti` (PK)
-- `user_id`
-- `issued_at`
-- `expires_at`
-- `revoked_at`
-- `rotated_from_jti`
+```bash
+uv run alembic upgrade head
+uv run alembic revision --autogenerate -m "describe change"
+```
 
-To keep revocation checks fast (<10ms target), ensure indexes from the migration are present.
+### Workflow
+
+1. Update SQLAlchemy models.
+2. Generate a migration (`make migrate-create ...`).
+3. Review/edit generated migration in `alembic/versions/`.
+4. Apply locally (`make migrate`).
+5. Run tests.
+
+### Startup migration gate
+
+On startup, the API verifies that the DB revision matches the Alembic head revision.
+If the DB is behind (or uninitialized), the app fails fast with an instruction to run migrations.
+
+You can disable this check in test/local scenarios:
+
+- `JM_API_DB_MIGRATION_CHECK_ENABLED=false`
 
 ### Observability settings
 
