@@ -257,21 +257,19 @@ def rotate_refresh_token(
             update(SessionToken)
             .where(SessionToken.token_jti == old_payload.jti)
             .where(SessionToken.revoked_at.is_(None))
-        )
-        if user_agent_hash is not None:
-            query = query.where(
+            .where(
                 or_(
-                    SessionToken.user_agent_hash == user_agent_hash,
                     SessionToken.user_agent_hash.is_(None),
+                    SessionToken.user_agent_hash == user_agent_hash,
                 )
             )
-        if ip_subnet is not None:
-            query = query.where(
+            .where(
                 or_(
-                    SessionToken.ip_subnet == ip_subnet,
                     SessionToken.ip_subnet.is_(None),
+                    SessionToken.ip_subnet == ip_subnet,
                 )
             )
+        )
 
         result = db.execute(query.values(revoked_at=_utcnow()))
 

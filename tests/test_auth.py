@@ -554,6 +554,30 @@ class TestSecurityHardening:
         response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_200_OK
 
+    def test_rotate_refresh_token_rejects_missing_request_metadata_when_bound(
+        self,
+        db_session: Session,
+        test_user: User,
+    ) -> None:
+        """Bound session metadata cannot be bypassed by passing None values."""
+        old_token = auth_deps.create_refresh_token(test_user.id)
+        new_token = auth_deps.create_refresh_token(test_user.id)
+        persist_refresh_token(
+            db_session,
+            old_token,
+            user_agent_hash="ua-hash",
+            ip_subnet="203.0.113.0/24",
+        )
+
+        rotated = auth_deps.rotate_refresh_token(
+            db_session,
+            old_token,
+            new_token,
+            user_agent_hash=None,
+            ip_subnet=None,
+        )
+        assert rotated is False
+
 
 class TestLogoutEndpoint:
     """Test the logout endpoint."""
