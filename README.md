@@ -142,6 +142,17 @@ All settings use the `JM_API_` prefix.
 
 Refresh-token revocation is persisted in SQL via the `session_tokens` table.
 
+### Security hardening for internet exposure
+
+- **CSRF protection**: refresh/logout/session-management endpoints require `X-CSRF-Token` matching the `csrf_token` cookie (double-submit cookie pattern).
+- **Session binding**: refresh-token rotation is bound to a device fingerprint (`user-agent` hash) and source IP subnet (`/24` IPv4, `/64` IPv6).
+- **Session management**:
+  - `GET /api/v1/auth/sessions`
+  - `DELETE /api/v1/auth/sessions/{session_jti}`
+  - `POST /api/v1/auth/sessions/revoke-others`
+- **JWT secret rotation**: configure `JM_API_JWT_SIGNING_KEYS` as comma-separated keys. First key signs new JWTs; all configured keys are accepted for verification during rollover.
+- **Security audit logs**: auth actions emit structured `security.audit` events including `event_type`, `outcome`, `ip`, `user_agent`, and optional risk flags.
+
 - `JM_API_SESSION_CLEANUP_INTERVAL_SECONDS=300` (opportunistic cleanup interval in API process)
 
 ## Database migrations (Alembic)
