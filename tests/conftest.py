@@ -22,6 +22,7 @@ def set_test_env(monkeypatch_session):
     Uses session scope to set once for all tests, avoiding module-level side effects.
     """
     monkeypatch_session.setenv("JM_API_DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch_session.setenv("JM_API_DB_MIGRATION_CHECK_ENABLED", "false")
     # Clear settings cache to pick up test environment
     from jm_api.core.config import get_settings
     get_settings.cache_clear()

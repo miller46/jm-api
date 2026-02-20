@@ -12,6 +12,8 @@ from pathlib import Path
 import httpx
 import pytest
 import uvicorn
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
@@ -42,9 +44,10 @@ def integration_server():
 
     settings = get_settings()
 
-    # 2. Create tables.
+    # 2. Apply migrations.
     engine = create_engine(settings.database_url)
-    Base.metadata.create_all(engine)
+    alembic_cfg = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    command.upgrade(alembic_cfg, "head")
 
     # 3. Start uvicorn in a background thread.
     port = _find_free_port()
