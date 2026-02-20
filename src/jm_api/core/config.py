@@ -70,6 +70,7 @@ class Settings(BaseSettings):
 
     # JWT Settings
     jwt_secret_key: str = Field(default=_DEFAULT_JWT_SECRET)
+    jwt_signing_keys: list[str] = Field(default_factory=list)
     jwt_algorithm: str = Field(default="HS256")
     jwt_access_token_expire_minutes: int = Field(default=15)
     jwt_refresh_token_expire_days: int = Field(default=7)
@@ -84,6 +85,15 @@ class Settings(BaseSettings):
     @field_validator("allow_origins", "allowed_hosts", mode="before")
     @classmethod
     def split_csv(cls, value: object) -> list[str] | object:
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return value
+
+    @field_validator("jwt_signing_keys", mode="before")
+    @classmethod
+    def split_signing_keys(cls, value: object) -> list[str] | object:
         if isinstance(value, str):
             if not value.strip():
                 return []

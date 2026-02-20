@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -73,3 +75,15 @@ class TokenPayload(BaseModel):
     iat: int  # issued at timestamp
     type: str  # "access" or "refresh"
     jti: str | None = None
+
+
+class SessionInfo(BaseModel):
+    token_jti: str
+    issued_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    current: bool = False
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionInfo]

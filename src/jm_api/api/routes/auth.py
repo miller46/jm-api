@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from secrets import token_urlsafe
+
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
@@ -16,11 +18,17 @@ from jm_api.api.deps import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    fingerprint_user_agent,
     get_current_user,
+    get_refresh_token_jti,
     get_refresh_token_state,
     hash_password,
+    ip_to_subnet,
+    list_user_sessions,
     persist_refresh_token,
+    revoke_other_sessions,
     revoke_refresh_token,
+    revoke_session_by_jti,
     revoke_user_sessions,
     rotate_refresh_token,
     verify_password,
@@ -28,7 +36,14 @@ from jm_api.api.deps import (
 from jm_api.core.config import get_settings
 from jm_api.db.session import get_db
 from jm_api.models.user import User
-from jm_api.schemas.auth import LoginRequest, TokenResponse, UserCreate, UserResponse
+from jm_api.schemas.auth import (
+    LoginRequest,
+    SessionInfo,
+    SessionListResponse,
+    TokenResponse,
+    UserCreate,
+    UserResponse,
+)
 
 limiter = Limiter(key_func=get_remote_address)
 
@@ -38,6 +53,55 @@ logger = structlog.get_logger(__name__)
 
 def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
+
+
+def _client_ip(request: Request) -> str | None:
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return None
+
+
+def _set_auth_cookies(response: Response, refresh_token: str, csrf_token: str) -> None:
+    settings = get_settings()
+    secure_cookie = settings.environment in {"production", "staging"}
+    ttl = settings.jwt_refresh_token_expire_days * 24 * 60 * 60
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=secure_cookie,
+        samesite="lax",
+        max_age=ttl,
+    )
+    response.set_cookie(
+        key="csrf_token",
+        value=csrf_token,
+        httponly=False,
+        secure=secure_cookie,
+        samesite="lax",
+        max_age=15 * 60,
+    )
+
+
+def _validate_csrf(csrf_cookie: str | None, csrf_header: str | None) -> None:
+    if not csrf_cookie or not csrf_header or csrf_cookie != csrf_header:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
+
+
+def _audit(request: Request, event_type: str, outcome: str, **extra: object) -> None:
+    logger.info(
+        "security.audit",
+        event_type=event_type,
+        outcome=outcome,
+        user_agent=request.headers.get("user-agent"),
+        ip=_client_ip(request),
+        request_id=_request_id(request),
+        risk_flags=extra.pop("risk_flags", []),
+        **extra,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
@@ -82,8 +146,15 @@ def login(
 
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
+    user_agent_hash = fingerprint_user_agent(request.headers.get("user-agent"))
+    ip_subnet = ip_to_subnet(_client_ip(request))
     try:
-        persist_refresh_token(db, refresh_token)
+        persist_refresh_token(
+            db,
+            refresh_token,
+            user_agent_hash=user_agent_hash,
+            ip_subnet=ip_subnet,
+        )
     except SessionTokenCollisionError:
         logger.warning(
             "auth.login.failed",
@@ -108,20 +179,16 @@ def login(
         )
 
     settings = get_settings()
+    csrf_token = token_urlsafe(32)
     logger.info(
         "auth.login.success",
         user_id=user.id,
         email=user.email,
         request_id=_request_id(request),
     )
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=settings.environment == "production",
-        samesite="lax",
-        max_age=settings.jwt_refresh_token_expire_days * 24 * 60 * 60,
-    )
+    _audit(request, "auth.login", "success", user_id=user.id)
+    _set_auth_cookies(response, refresh_token, csrf_token)
+    response.headers["X-CSRF-Token"] = csrf_token
 
     return TokenResponse(
         access_token=access_token,
@@ -200,6 +267,8 @@ def refresh_token(
     request: Request,
     response: Response,
     refresh_token_cookie: str | None = Cookie(None, alias="refresh_token"),
+    csrf_cookie: str | None = Cookie(None, alias="csrf_token"),
+    x_csrf_token: str | None = Header(None, alias="X-CSRF-Token"),
     db: Session = Depends(get_db),
 ) -> TokenResponse:
     """Refresh access token using the httpOnly refresh-token cookie."""
@@ -216,6 +285,8 @@ def refresh_token(
             detail="Refresh token required",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    _validate_csrf(csrf_cookie, x_csrf_token)
 
     try:
         refresh_state = get_refresh_token_state(db, token)
@@ -301,8 +372,16 @@ def refresh_token(
     settings = get_settings()
     new_access_token = create_access_token(user.id)
     new_refresh_token = create_refresh_token(user.id)
+    user_agent_hash = fingerprint_user_agent(request.headers.get("user-agent"))
+    ip_subnet = ip_to_subnet(_client_ip(request))
     try:
-        rotated = rotate_refresh_token(db, token, new_refresh_token)
+        rotated = rotate_refresh_token(
+            db,
+            token,
+            new_refresh_token,
+            user_agent_hash=user_agent_hash,
+            ip_subnet=ip_subnet,
+        )
         if not rotated:
             logger.warning(
                 "auth.refresh.failed",
@@ -338,20 +417,16 @@ def refresh_token(
             detail="Authentication service unavailable",
         )
 
-    response.set_cookie(
-        key="refresh_token",
-        value=new_refresh_token,
-        httponly=True,
-        secure=settings.environment == "production",
-        samesite="lax",
-        max_age=settings.jwt_refresh_token_expire_days * 24 * 60 * 60,
-    )
+    csrf_token = token_urlsafe(32)
+    _set_auth_cookies(response, new_refresh_token, csrf_token)
+    response.headers["X-CSRF-Token"] = csrf_token
 
     logger.info(
         "auth.refresh.success",
         user_id=user.id,
         request_id=_request_id(request),
     )
+    _audit(request, "auth.refresh", "success", user_id=user.id)
 
     return TokenResponse(
         access_token=new_access_token,
@@ -366,9 +441,13 @@ def logout(
     request: Request,
     response: Response,
     refresh_token_cookie: str | None = Cookie(None, alias="refresh_token"),
+    csrf_cookie: str | None = Cookie(None, alias="csrf_token"),
+    x_csrf_token: str | None = Header(None, alias="X-CSRF-Token"),
     db: Session = Depends(get_db),
 ) -> None:
     """Logout user by revoking refresh token and clearing the refresh-token cookie."""
+    _validate_csrf(csrf_cookie, x_csrf_token)
+
     if refresh_token_cookie is not None:
         try:
             revoke_refresh_token(db, refresh_token_cookie)
@@ -390,7 +469,71 @@ def logout(
     )
 
     response.delete_cookie(key="refresh_token")
+    response.delete_cookie(key="csrf_token")
+    _audit(request, "auth.logout", "success")
     return None
+
+
+@router.get("/sessions", response_model=SessionListResponse)
+def get_sessions(
+    refresh_token_cookie: str | None = Cookie(None, alias="refresh_token"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SessionListResponse:
+    current_jti = None
+    if refresh_token_cookie:
+        try:
+            current_jti = get_refresh_token_jti(refresh_token_cookie)
+        except HTTPException:
+            current_jti = None
+
+    sessions = [
+        SessionInfo(
+            token_jti=s.token_jti,
+            issued_at=s.issued_at,
+            expires_at=s.expires_at,
+            revoked_at=s.revoked_at,
+            current=s.token_jti == current_jti,
+        )
+        for s in list_user_sessions(db, current_user.id)
+    ]
+    return SessionListResponse(sessions=sessions)
+
+
+@router.delete("/sessions/{session_jti}", status_code=status.HTTP_204_NO_CONTENT)
+def revoke_session(
+    request: Request,
+    session_jti: str,
+    csrf_cookie: str | None = Cookie(None, alias="csrf_token"),
+    x_csrf_token: str | None = Header(None, alias="X-CSRF-Token"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    _validate_csrf(csrf_cookie, x_csrf_token)
+    revoke_session_by_jti(db, current_user.id, session_jti)
+    _audit(request, "auth.session.revoke", "success", user_id=current_user.id, session_id=session_jti)
+    return None
+
+
+@router.post("/sessions/revoke-others")
+def revoke_sessions_except_current(
+    request: Request,
+    refresh_token_cookie: str | None = Cookie(None, alias="refresh_token"),
+    csrf_cookie: str | None = Cookie(None, alias="csrf_token"),
+    x_csrf_token: str | None = Header(None, alias="X-CSRF-Token"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    _validate_csrf(csrf_cookie, x_csrf_token)
+    current_jti = None
+    if refresh_token_cookie:
+        try:
+            current_jti = get_refresh_token_jti(refresh_token_cookie)
+        except HTTPException:
+            current_jti = None
+    revoked = revoke_other_sessions(db, current_user.id, current_jti)
+    _audit(request, "auth.session.revoke_others", "success", user_id=current_user.id)
+    return {"revoked": revoked}
 
 
 @router.get("/me", response_model=UserResponse)
