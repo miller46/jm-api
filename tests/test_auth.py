@@ -602,6 +602,51 @@ class TestSecurityHardening:
         )
         assert rotated is False
 
+    def test_refresh_rejects_malformed_forwarded_ip_and_missing_ua_when_session_bound(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Bound sessions fail closed when refresh request metadata is missing/unparseable."""
+        monkeypatch.setenv("JM_API_TRUST_PROXY_HEADERS", "true")
+        get_settings.cache_clear()
+
+        try:
+            login_response = client.post(
+                "/api/v1/auth/login",
+                json={"email": "test@example.com", "password": "securepassword123"},
+                headers={"User-Agent": "ua-original", "X-Forwarded-For": "203.0.113.19"},
+            )
+            assert login_response.status_code == status.HTTP_200_OK
+            refresh_cookie = login_response.cookies.get("refresh_token")
+            assert refresh_cookie is not None
+
+            jti = auth_deps.get_refresh_token_jti(refresh_cookie)
+            db_session.execute(
+                update(SessionToken)
+                .where(SessionToken.token_jti == jti)
+                .values(
+                    user_agent_hash=auth_deps.fingerprint_user_agent("ua-original"),
+                    ip_subnet="203.0.113.0/24",
+                )
+            )
+            db_session.commit()
+
+            response = client.post(
+                "/api/v1/auth/refresh",
+                headers={
+                    "X-CSRF-Token": client.cookies.get("csrf_token") or "",
+                    "User-Agent": "",
+                    "X-Forwarded-For": "not-an-ip",
+                },
+            )
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
+            assert "consumed" in response.json()["detail"].lower()
+        finally:
+            get_settings.cache_clear()
+
     def test_login_ignores_x_forwarded_for_when_proxy_headers_untrusted(
         self,
         client: TestClient,
