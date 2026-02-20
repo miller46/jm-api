@@ -56,9 +56,11 @@ def _request_id(request: Request) -> str | None:
 
 
 def _client_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    settings = get_settings()
+    if settings.trust_proxy_headers:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     if request.client:
         return request.client.host
     return None
@@ -192,7 +194,6 @@ def login(
 
     return TokenResponse(
         access_token=access_token,
-        refresh_token=refresh_token,
         token_type="bearer",
         expires_in=settings.jwt_access_token_expire_minutes * 60,
     )
@@ -430,7 +431,6 @@ def refresh_token(
 
     return TokenResponse(
         access_token=new_access_token,
-        refresh_token=new_refresh_token,
         token_type="bearer",
         expires_in=settings.jwt_access_token_expire_minutes * 60,
     )
@@ -525,12 +525,22 @@ def revoke_sessions_except_current(
     db: Session = Depends(get_db),
 ) -> dict[str, int]:
     _validate_csrf(csrf_cookie, x_csrf_token)
-    current_jti = None
-    if refresh_token_cookie:
-        try:
-            current_jti = get_refresh_token_jti(refresh_token_cookie)
-        except HTTPException:
-            current_jti = None
+    if refresh_token_cookie is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        current_jti = get_refresh_token_jti(refresh_token_cookie)
+    except HTTPException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
     revoked = revoke_other_sessions(db, current_user.id, current_jti)
     _audit(request, "auth.session.revoke_others", "success", user_id=current_user.id)
     return {"revoked": revoked}
