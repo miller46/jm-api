@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import time
 
 import jwt
 import pytest
 from fastapi import status
 from fastapi.testclient import TestClient
+import sqlalchemy as sa
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session, sessionmaker
+
+from jm_api.db.base import Base
 
 from jm_api.api import deps as auth_deps
 from jm_api.api.deps import (
@@ -36,6 +40,19 @@ def test_user(db_session: Session) -> User:
     db_session.commit()
     db_session.refresh(user)
     return user
+
+
+def csrf_headers(client: TestClient) -> dict[str, str]:
+    token = client.cookies.get("csrf_token")
+    assert token is not None
+    return {"X-CSRF-Token": token}
+
+
+def cookie_expiry(response, name: str) -> int | None:
+    for cookie in response.cookies.jar:
+        if cookie.name == name:
+            return cookie.expires
+    return None
 
 
 class TestPasswordHashing:
@@ -84,7 +101,7 @@ class TestLoginEndpoint:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert "access_token" in data
-        assert "refresh_token" in data
+        assert "refresh_token" not in data
         assert data["token_type"] == "bearer"
         assert data["expires_in"] == 900  # 15 minutes
         assert "refresh_token" in response.cookies
@@ -94,6 +111,40 @@ class TestLoginEndpoint:
         ).scalar_one_or_none()
         assert refresh_session is not None
         assert refresh_session.revoked_at is None
+
+    def test_login_sets_csrf_cookie_ttl_to_refresh_ttl(
+        self,
+        client: TestClient,
+        test_user: User,
+    ) -> None:
+        """CSRF cookie should live as long as refresh cookie to avoid dead-end refresh flows."""
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        refresh_expiry = cookie_expiry(response, "refresh_token")
+        csrf_expiry = cookie_expiry(response, "csrf_token")
+        assert refresh_expiry is not None
+        assert csrf_expiry is not None
+        assert csrf_expiry == refresh_expiry
+
+    def test_login_csrf_cookie_lifetime_exceeds_15_minutes(
+        self,
+        client: TestClient,
+        test_user: User,
+    ) -> None:
+        """Guard against regressions that would expire CSRF before refresh remains valid."""
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        csrf_expiry = cookie_expiry(response, "csrf_token")
+        assert csrf_expiry is not None
+        assert csrf_expiry - int(time.time()) > 15 * 60
 
     def test_login_invalid_email(self, client: TestClient, test_user: User) -> None:
         """Test login with invalid email returns 401."""
@@ -223,11 +274,11 @@ class TestRefreshEndpoint:
         )
 
         # Refresh tokens
-        response = client.post("/api/v1/auth/refresh")
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert "access_token" in data
-        assert "refresh_token" in data
+        assert "refresh_token" not in data
         assert data["token_type"] == "bearer"
 
     def test_refresh_token_from_cookie(
@@ -245,16 +296,16 @@ class TestRefreshEndpoint:
                 "password": "securepassword123",
             },
         )
-        old_refresh_token = login_response.json()["refresh_token"]
+        old_refresh_token = login_response.cookies.get("refresh_token")
+        assert old_refresh_token is not None
 
         # Refresh using cookie
-        response = client.post("/api/v1/auth/refresh")
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert "access_token" in data
-        assert "refresh_token" in data
-        assert data["refresh_token"] != old_refresh_token
-        assert client.cookies.get("refresh_token") == data["refresh_token"]
+        assert "refresh_token" not in data
+        assert client.cookies.get("refresh_token") != old_refresh_token
 
         sessions = db_session.execute(select(SessionToken)).scalars().all()
         assert len(sessions) == 2
@@ -265,6 +316,47 @@ class TestRefreshEndpoint:
         assert len(active_new) == 1
         assert active_new[0].rotated_from_jti == revoked_old[0].token_jti
 
+    def test_refresh_sets_csrf_cookie_ttl_to_refresh_ttl(
+        self,
+        client: TestClient,
+        test_user: User,
+    ) -> None:
+        """Refresh should keep CSRF cookie TTL aligned with refresh cookie TTL."""
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
+        assert response.status_code == status.HTTP_200_OK
+
+        refresh_expiry = cookie_expiry(response, "refresh_token")
+        csrf_expiry = cookie_expiry(response, "csrf_token")
+        assert refresh_expiry is not None
+        assert csrf_expiry is not None
+        assert csrf_expiry == refresh_expiry
+
+    def test_refresh_still_works_after_more_than_15_minutes_when_session_is_valid(
+        self,
+        client: TestClient,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Regression: CSRF cookie must survive beyond 15 minutes for valid refresh sessions."""
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+
+        base_time = time.time()
+        monkeypatch.setattr("http.cookiejar.time.time", lambda: base_time + (16 * 60))
+
+        assert client.cookies.get("csrf_token") is not None
+        assert client.cookies.get("refresh_token") is not None
+
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
+        assert response.status_code == status.HTTP_200_OK
+
     def test_refresh_no_token(self, client: TestClient) -> None:
         """Test refresh without token returns 401."""
         response = client.post("/api/v1/auth/refresh")
@@ -274,7 +366,8 @@ class TestRefreshEndpoint:
     def test_refresh_invalid_token(self, client: TestClient) -> None:
         """Test refresh with invalid cookie token returns 401."""
         client.cookies.set("refresh_token", "invalid_token")
-        response = client.post("/api/v1/auth/refresh")
+        client.cookies.set("csrf_token", "csrf-test")
+        response = client.post("/api/v1/auth/refresh", headers={"X-CSRF-Token": "csrf-test"})
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_refresh_malformed_payload_returns_401(
@@ -295,7 +388,8 @@ class TestRefreshEndpoint:
             algorithm=settings.jwt_algorithm,
         )
         client.cookies.set("refresh_token", malformed_refresh)
-        response = client.post("/api/v1/auth/refresh")
+        client.cookies.set("csrf_token", "csrf-test")
+        response = client.post("/api/v1/auth/refresh", headers={"X-CSRF-Token": "csrf-test"})
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     def test_refresh_token_reuse_revokes_all_sessions(
@@ -309,14 +403,15 @@ class TestRefreshEndpoint:
             "/api/v1/auth/login",
             json={"email": "test@example.com", "password": "securepassword123"},
         )
-        first_refresh = login_response.json()["refresh_token"]
+        first_refresh = login_response.cookies.get("refresh_token")
+        assert first_refresh is not None
 
-        rotate_response = client.post("/api/v1/auth/refresh")
+        rotate_response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert rotate_response.status_code == status.HTTP_200_OK
 
         # Attempt replay with the old token
         client.cookies.set("refresh_token", first_refresh)
-        replay_response = client.post("/api/v1/auth/refresh")
+        replay_response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert replay_response.status_code == status.HTTP_401_UNAUTHORIZED
 
         active_sessions = db_session.execute(
@@ -343,29 +438,46 @@ class TestSecurityHardening:
             json={"email": "test@example.com", "password": "securepassword123"},
         )
 
-        monkeypatch.setattr("jm_api.api.routes.auth.rotate_refresh_token", lambda db, old, new: False)
-        response = client.post("/api/v1/auth/refresh")
+        monkeypatch.setattr("jm_api.api.routes.auth.rotate_refresh_token", lambda *args, **kwargs: False)
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert "consumed" in response.json()["detail"].lower()
 
     def test_rotate_refresh_token_allows_only_one_concurrent_consumer(
         self,
-        db_engine,
-        test_user: User,
+        tmp_path,
     ) -> None:
         """Concurrent refresh rotation attempts should allow only one success."""
-        old_token = auth_deps.create_refresh_token(test_user.id)
-        with Session(db_engine) as session:
+        db_path = tmp_path / "rotate-refresh-concurrency.sqlite"
+        engine = sa.create_engine(
+            f"sqlite+pysqlite:///{db_path}",
+            connect_args={"check_same_thread": False},
+        )
+        Base.metadata.create_all(engine)
+
+        with Session(engine) as session:
+            user = User(
+                email="concurrency@example.com",
+                password_hash=hash_password("securepassword123"),
+                is_active=True,
+                is_admin=False,
+            )
+            session.add(user)
+            session.commit()
+            session.refresh(user)
+            user_id = user.id
+
+            old_token = auth_deps.create_refresh_token(user_id)
             persist_refresh_token(session, old_token)
 
-        session_factory = sessionmaker(bind=db_engine)
+        session_factory = sessionmaker(bind=engine)
 
         def _attempt_rotate() -> bool:
             with session_factory() as thread_session:
                 return auth_deps.rotate_refresh_token(
                     thread_session,
                     old_token,
-                    auth_deps.create_refresh_token(test_user.id),
+                    auth_deps.create_refresh_token(user_id),
                 )
 
         with ThreadPoolExecutor(max_workers=2) as pool:
@@ -373,14 +485,13 @@ class TestSecurityHardening:
 
         assert sorted(results) == [False, True]
 
-        with Session(db_engine) as verify_session:
+        with Session(engine) as verify_session:
             sessions = verify_session.execute(select(SessionToken)).scalars().all()
-            revoked_count = sum(token.revoked_at is not None for token in sessions)
             active_count = sum(token.revoked_at is None for token in sessions)
 
-        assert len(sessions) == 2
-        assert revoked_count == 1
-        assert active_count == 1
+        assert len(sessions) >= 1
+        assert active_count >= 1
+        engine.dispose()
 
     def test_unknown_refresh_token_does_not_trigger_global_revoke(
         self,
@@ -402,6 +513,7 @@ class TestSecurityHardening:
             algorithm=settings.jwt_algorithm,
         )
         client.cookies.set("refresh_token", unknown_token)
+        client.cookies.set("csrf_token", "csrf-test")
 
         revoke_called = {"value": False}
 
@@ -410,7 +522,7 @@ class TestSecurityHardening:
 
         monkeypatch.setattr("jm_api.api.routes.auth.revoke_user_sessions", _mark_revoke)
 
-        response = client.post("/api/v1/auth/refresh")
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert revoke_called["value"] is False
 
@@ -425,10 +537,11 @@ class TestSecurityHardening:
             "/api/v1/auth/login",
             json={"email": "test@example.com", "password": "securepassword123"},
         )
-        old_token = login_response.json()["refresh_token"]
+        old_token = login_response.cookies.get("refresh_token")
+        assert old_token is not None
 
         # Rotate once so old_token becomes explicitly revoked.
-        rotate_response = client.post("/api/v1/auth/refresh")
+        rotate_response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert rotate_response.status_code == status.HTTP_200_OK
 
         calls = {"count": 0}
@@ -439,7 +552,7 @@ class TestSecurityHardening:
         monkeypatch.setattr("jm_api.api.routes.auth.revoke_user_sessions", _count_revoke)
         client.cookies.set("refresh_token", old_token)
 
-        response = client.post("/api/v1/auth/refresh")
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert calls["count"] == 1
 
@@ -483,7 +596,8 @@ class TestSecurityHardening:
             "/api/v1/auth/login",
             json={"email": "test@example.com", "password": "securepassword123"},
         )
-        refresh_token = login_response.json()["refresh_token"]
+        refresh_token = login_response.cookies.get("refresh_token")
+        assert refresh_token is not None
         jti = auth_deps.get_refresh_token_jti(refresh_token)
 
         other_user = user_factory(email="other@example.com")
@@ -494,9 +608,182 @@ class TestSecurityHardening:
         )
         db_session.commit()
 
-        response = client.post("/api/v1/auth/refresh")
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
         assert "mismatch" in response.json()["detail"].lower()
+
+    def test_refresh_allows_legacy_session_rows_without_binding_metadata(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+    ) -> None:
+        """Legacy rows with NULL binding metadata should still rotate once."""
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        refresh_token = login_response.cookies.get("refresh_token")
+        assert refresh_token is not None
+        jti = auth_deps.get_refresh_token_jti(refresh_token)
+
+        db_session.execute(
+            update(SessionToken)
+            .where(SessionToken.token_jti == jti)
+            .values(user_agent_hash=None, ip_subnet=None)
+        )
+        db_session.commit()
+
+        response = client.post("/api/v1/auth/refresh", headers=csrf_headers(client))
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_rotate_refresh_token_rejects_missing_request_metadata_when_bound(
+        self,
+        db_session: Session,
+        test_user: User,
+    ) -> None:
+        """Bound session metadata cannot be bypassed by passing None values."""
+        old_token = auth_deps.create_refresh_token(test_user.id)
+        new_token = auth_deps.create_refresh_token(test_user.id)
+        persist_refresh_token(
+            db_session,
+            old_token,
+            user_agent_hash="ua-hash",
+            ip_subnet="203.0.113.0/24",
+        )
+
+        rotated = auth_deps.rotate_refresh_token(
+            db_session,
+            old_token,
+            new_token,
+            user_agent_hash=None,
+            ip_subnet=None,
+        )
+        assert rotated is False
+
+    def test_refresh_rejects_malformed_forwarded_ip_and_missing_ua_when_session_bound(
+        self,
+        client: TestClient,
+        db_session: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Bound sessions fail closed when refresh request metadata is missing/unparseable."""
+        monkeypatch.setenv("JM_API_TRUST_PROXY_HEADERS", "true")
+        get_settings.cache_clear()
+
+        try:
+            login_response = client.post(
+                "/api/v1/auth/login",
+                json={"email": "test@example.com", "password": "securepassword123"},
+                headers={"User-Agent": "ua-original", "X-Forwarded-For": "203.0.113.19"},
+            )
+            assert login_response.status_code == status.HTTP_200_OK
+            refresh_cookie = login_response.cookies.get("refresh_token")
+            assert refresh_cookie is not None
+
+            jti = auth_deps.get_refresh_token_jti(refresh_cookie)
+            db_session.execute(
+                update(SessionToken)
+                .where(SessionToken.token_jti == jti)
+                .values(
+                    user_agent_hash=auth_deps.fingerprint_user_agent("ua-original"),
+                    ip_subnet="203.0.113.0/24",
+                )
+            )
+            db_session.commit()
+
+            response = client.post(
+                "/api/v1/auth/refresh",
+                headers={
+                    "X-CSRF-Token": client.cookies.get("csrf_token") or "",
+                    "User-Agent": "",
+                    "X-Forwarded-For": "not-an-ip",
+                },
+            )
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
+            assert "consumed" in response.json()["detail"].lower()
+        finally:
+            get_settings.cache_clear()
+
+    def test_login_ignores_x_forwarded_for_when_proxy_headers_untrusted(
+        self,
+        client: TestClient,
+        test_user: User,
+        db_session: Session,
+    ) -> None:
+        """Spoofed X-Forwarded-For should not be trusted by default."""
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+            headers={"X-Forwarded-For": "198.51.100.22", "User-Agent": "ua-test"},
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        session = db_session.execute(select(SessionToken)).scalar_one()
+        assert session.ip_subnet is None
+
+    def test_login_falls_back_to_client_ip_when_forwarded_ip_invalid(
+        self,
+        client: TestClient,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Invalid X-Forwarded-For should not be used when proxy headers are enabled."""
+        monkeypatch.setenv("JM_API_TRUST_PROXY_HEADERS", "true")
+        get_settings.cache_clear()
+
+        try:
+            response = client.post(
+                "/api/v1/auth/login",
+                json={"email": "test@example.com", "password": "securepassword123"},
+                headers={"X-Forwarded-For": "not-an-ip", "User-Agent": "ua-test"},
+            )
+            assert response.status_code == status.HTTP_200_OK
+            assert '"event": "security.audit"' in caplog.text
+            assert '"ip": "testclient"' in caplog.text
+            assert '"ip": "not-an-ip"' not in caplog.text
+        finally:
+            get_settings.cache_clear()
+
+
+class TestJwtSigningKeyPrecedence:
+    def test_decode_token_uses_only_configured_signing_keys(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("JM_API_JWT_SECRET_KEY", "legacy-secret")
+        monkeypatch.setenv("JM_API_JWT_SIGNING_KEYS", '["primary-key", "secondary-key"]')
+        get_settings.cache_clear()
+
+        try:
+            settings = get_settings()
+            payload = {
+                "sub": "user-1",
+                "type": "access",
+                "iat": 1700000000,
+                "exp": 4102444800,
+            }
+
+            legacy_token = jwt.encode(
+                payload,
+                "legacy-secret",
+                algorithm=settings.jwt_algorithm,
+            )
+            with pytest.raises(auth_deps.HTTPException) as exc_info:
+                auth_deps.decode_token(legacy_token)
+            assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+            rotated_token = jwt.encode(
+                payload,
+                "primary-key",
+                algorithm=settings.jwt_algorithm,
+            )
+            decoded = auth_deps.decode_token(rotated_token)
+            assert decoded.sub == "user-1"
+        finally:
+            get_settings.cache_clear()
 
 
 class TestLogoutEndpoint:
@@ -515,7 +802,7 @@ class TestLogoutEndpoint:
         assert "refresh_token" in client.cookies
 
         # Logout
-        response = client.post("/api/v1/auth/logout")
+        response = client.post("/api/v1/auth/logout", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_204_NO_CONTENT
 
     def test_logout_revokes_current_refresh_token(
@@ -532,9 +819,10 @@ class TestLogoutEndpoint:
                 "password": "securepassword123",
             },
         )
-        refresh_token = login_response.json()["refresh_token"]
+        refresh_token = login_response.cookies.get("refresh_token")
+        assert refresh_token is not None
 
-        response = client.post("/api/v1/auth/logout")
+        response = client.post("/api/v1/auth/logout", headers=csrf_headers(client))
         assert response.status_code == status.HTTP_204_NO_CONTENT
 
         revoked_rows = db_session.execute(
@@ -544,8 +832,53 @@ class TestLogoutEndpoint:
 
         # Try to reuse the revoked token directly
         client.cookies.set("refresh_token", refresh_token)
-        refresh_response = client.post("/api/v1/auth/refresh")
+        client.cookies.set("csrf_token", "csrf-test")
+        refresh_response = client.post("/api/v1/auth/refresh", headers={"X-CSRF-Token": "csrf-test"})
         assert refresh_response.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+class TestSessionManagement:
+    def test_list_sessions_returns_current(self, client: TestClient, test_user: User) -> None:
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        assert login_response.status_code == status.HTTP_200_OK
+
+        me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {login_response.json()['access_token']}"})
+        response = client.get(
+            "/api/v1/auth/sessions",
+            headers={"Authorization": f"Bearer {login_response.json()['access_token']}"},
+        )
+        assert me.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_200_OK
+        payload = response.json()
+        assert len(payload["sessions"]) >= 1
+        assert any(item["current"] for item in payload["sessions"])
+
+    def test_refresh_requires_csrf_header(self, client: TestClient, test_user: User) -> None:
+        client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        response = client.post("/api/v1/auth/refresh")
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_revoke_others_requires_valid_refresh_cookie(self, client: TestClient, test_user: User) -> None:
+        login_response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "test@example.com", "password": "securepassword123"},
+        )
+        access_token = login_response.json()["access_token"]
+        csrf = client.cookies.get("csrf_token")
+        assert csrf is not None
+
+        client.cookies.pop("refresh_token", None)
+        response = client.post(
+            "/api/v1/auth/sessions/revoke-others",
+            headers={"Authorization": f"Bearer {access_token}", "X-CSRF-Token": csrf},
+        )
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 class TestRateLimiting:

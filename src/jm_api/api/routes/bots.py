@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
+import os
+
 from jm_api.api.deps import ADMIN_ONLY
 
 from jm_api.api.generic import (
@@ -61,6 +63,14 @@ _delete_router = create_delete_router(
 
 router = APIRouter()
 router.include_router(_read_router)
-router.include_router(_create_router, dependencies=ADMIN_ONLY)
-router.include_router(_update_router, dependencies=ADMIN_ONLY)
-router.include_router(_delete_router, dependencies=ADMIN_ONLY)
+
+def _env_flag(name: str, default: str = "false") -> bool:
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+_bots_write_admin_only = _env_flag("JM_API_BOTS_WRITE_ADMIN_ONLY")
+_write_dependencies = ADMIN_ONLY if _bots_write_admin_only else None
+
+router.include_router(_create_router, dependencies=_write_dependencies)
+router.include_router(_update_router, dependencies=_write_dependencies)
+router.include_router(_delete_router, dependencies=_write_dependencies)

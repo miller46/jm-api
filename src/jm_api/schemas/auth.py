@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -43,7 +45,6 @@ class TokenResponse(BaseModel):
     """Token response schema."""
 
     access_token: str
-    refresh_token: str
     token_type: str = "bearer"
     expires_in: int  # seconds
 
@@ -51,7 +52,6 @@ class TokenResponse(BaseModel):
         json_schema_extra={
             "example": {
                 "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
                 "token_type": "bearer",
                 "expires_in": 900,
             }
@@ -73,3 +73,15 @@ class TokenPayload(BaseModel):
     iat: int  # issued at timestamp
     type: str  # "access" or "refresh"
     jti: str | None = None
+
+
+class SessionInfo(BaseModel):
+    token_jti: str
+    issued_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    current: bool = False
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionInfo]

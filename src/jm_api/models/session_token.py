@@ -28,3 +28,5 @@ class SessionToken(Base):
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rotated_from_jti: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    user_agent_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    ip_subnet: Mapped[str | None] = mapped_column(String(64), nullable=True)

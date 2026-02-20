@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from hashlib import sha256
+from ipaddress import ip_address
 from uuid import uuid4
 
 import bcrypt
@@ -11,7 +13,7 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import ValidationError
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -47,6 +49,36 @@ def _normalize_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _get_signing_keys() -> list[str]:
+    settings = get_settings()
+    keys = [key for key in settings.jwt_signing_keys if key]
+    if keys:
+        return keys
+    return [settings.jwt_secret_key]
+
+
+def fingerprint_user_agent(user_agent: str | None) -> str | None:
+    if not user_agent:
+        return None
+    return sha256(user_agent.encode("utf-8")).hexdigest()
+
+
+def ip_to_subnet(ip: str | None) -> str | None:
+    if not ip:
+        return None
+    try:
+        parsed = ip_address(ip)
+    except ValueError:
+        return None
+
+    if parsed.version == 4:
+        octets = str(parsed).split(".")
+        return ".".join(octets[:3]) + ".0/24"
+
+    hextets = parsed.exploded.split(":")
+    return ":".join(hextets[:4]) + "::/64"
 
 
 def _maybe_cleanup_expired_sessions(db: Session) -> None:
@@ -102,7 +134,7 @@ def create_access_token(user_id: str, expires_delta: timedelta | None = None) ->
 
     return jwt.encode(
         payload,
-        settings.jwt_secret_key,
+        _get_signing_keys()[0],
         algorithm=settings.jwt_algorithm,
     )
 
@@ -124,7 +156,7 @@ def create_refresh_token(user_id: str) -> str:
 
     return jwt.encode(
         payload,
-        settings.jwt_secret_key,
+        _get_signing_keys()[0],
         algorithm=settings.jwt_algorithm,
     )
 
@@ -133,25 +165,30 @@ def decode_token(token: str) -> TokenPayload:
     """Decode and validate a JWT token."""
     settings = get_settings()
 
-    try:
-        payload = jwt.decode(
-            token,
-            settings.jwt_secret_key,
-            algorithms=[settings.jwt_algorithm],
-        )
-        return TokenPayload(**payload)
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has expired",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except (jwt.InvalidTokenError, ValidationError):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    last_error: Exception | None = None
+    for key in _get_signing_keys():
+        try:
+            payload = jwt.decode(
+                token,
+                key,
+                algorithms=[settings.jwt_algorithm],
+            )
+            return TokenPayload(**payload)
+        except jwt.ExpiredSignatureError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token has expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        except (jwt.InvalidTokenError, ValidationError) as exc:
+            last_error = exc
+            continue
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid token",
+        headers={"WWW-Authenticate": "Bearer"},
+    ) from last_error
 
 
 def _decode_refresh_token_payload(token: str) -> TokenPayload:
@@ -165,7 +202,13 @@ def _decode_refresh_token_payload(token: str) -> TokenPayload:
     return payload
 
 
-def persist_refresh_token(db: Session, token: str, rotated_from_jti: str | None = None) -> None:
+def persist_refresh_token(
+    db: Session,
+    token: str,
+    rotated_from_jti: str | None = None,
+    user_agent_hash: str | None = None,
+    ip_subnet: str | None = None,
+) -> None:
     """Persist issued refresh token in session store."""
     payload = _decode_refresh_token_payload(token)
     issued_at = datetime.fromtimestamp(payload.iat, tz=timezone.utc)
@@ -179,6 +222,8 @@ def persist_refresh_token(db: Session, token: str, rotated_from_jti: str | None 
             expires_at=expires_at,
             revoked_at=None,
             rotated_from_jti=rotated_from_jti,
+            user_agent_hash=user_agent_hash,
+            ip_subnet=ip_subnet,
         )
     )
     try:
@@ -191,7 +236,13 @@ def persist_refresh_token(db: Session, token: str, rotated_from_jti: str | None 
         raise
 
 
-def rotate_refresh_token(db: Session, old_token: str, new_token: str) -> bool:
+def rotate_refresh_token(
+    db: Session,
+    old_token: str,
+    new_token: str,
+    user_agent_hash: str | None = None,
+    ip_subnet: str | None = None,
+) -> bool:
     """Atomically consume old refresh token and persist a new replacement token."""
     old_payload = _decode_refresh_token_payload(old_token)
     new_payload = _decode_refresh_token_payload(new_token)
@@ -200,12 +251,25 @@ def rotate_refresh_token(db: Session, old_token: str, new_token: str) -> bool:
     expires_at = datetime.fromtimestamp(new_payload.exp, tz=timezone.utc)
 
     try:
-        result = db.execute(
+        query = (
             update(SessionToken)
             .where(SessionToken.token_jti == old_payload.jti)
             .where(SessionToken.revoked_at.is_(None))
-            .values(revoked_at=_utcnow())
+            .where(
+                or_(
+                    SessionToken.user_agent_hash.is_(None),
+                    SessionToken.user_agent_hash == user_agent_hash,
+                )
+            )
+            .where(
+                or_(
+                    SessionToken.ip_subnet.is_(None),
+                    SessionToken.ip_subnet == ip_subnet,
+                )
+            )
         )
+
+        result = db.execute(query.values(revoked_at=_utcnow()))
 
         if not result.rowcount:
             db.rollback()
@@ -219,6 +283,8 @@ def rotate_refresh_token(db: Session, old_token: str, new_token: str) -> bool:
                 expires_at=expires_at,
                 revoked_at=None,
                 rotated_from_jti=old_payload.jti,
+                user_agent_hash=user_agent_hash,
+                ip_subnet=ip_subnet,
             )
         )
         db.commit()
@@ -331,6 +397,39 @@ def get_refresh_token_jti(token: str) -> str:
     payload = _decode_refresh_token_payload(token)
     assert payload.jti is not None
     return payload.jti
+
+
+def list_user_sessions(db: Session, user_id: str) -> list[SessionToken]:
+    return db.execute(
+        select(SessionToken)
+        .where(SessionToken.user_id == user_id)
+        .order_by(SessionToken.issued_at.desc())
+    ).scalars().all()
+
+
+def revoke_session_by_jti(db: Session, user_id: str, token_jti: str) -> bool:
+    result = db.execute(
+        update(SessionToken)
+        .where(SessionToken.user_id == user_id)
+        .where(SessionToken.token_jti == token_jti)
+        .where(SessionToken.revoked_at.is_(None))
+        .values(revoked_at=_utcnow())
+    )
+    db.commit()
+    return bool(result.rowcount)
+
+
+def revoke_other_sessions(db: Session, user_id: str, current_jti: str | None) -> int:
+    query = (
+        update(SessionToken)
+        .where(SessionToken.user_id == user_id)
+        .where(SessionToken.revoked_at.is_(None))
+    )
+    if current_jti:
+        query = query.where(SessionToken.token_jti != current_jti)
+    result = db.execute(query.values(revoked_at=_utcnow()))
+    db.commit()
+    return int(result.rowcount or 0)
 
 
 def get_current_user(
