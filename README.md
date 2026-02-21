@@ -11,6 +11,8 @@ FastAPI + SQLAlchemy backend with JWT auth, bot management endpoints, a small ad
 - Admin frontend served at `/admin`
 - Alembic migrations
 - Observability: structured logs, request IDs, Prometheus metrics, optional OpenTelemetry tracing
+- Safety defaults: SQLite allowed for local dev, rejected for `staging`/`production`
+- Bot write protection is secure by default (`JM_API_BOTS_WRITE_ADMIN_ONLY=true`)
 
 ## Project structure
 
@@ -44,7 +46,7 @@ tests/
   integration/           # full-stack integration tests
 ```
 
-## Quick start
+## Quickstart
 
 ### 1) Install dependencies
 
@@ -77,6 +79,15 @@ make migrate
 
 ```bash
 uv run uvicorn jm_api.main:app --reload
+```
+
+Production process model (Procfile):
+
+```bash
+gunicorn jm_api.main:app \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:${PORT:-8000} \
+  --workers ${WEB_CONCURRENCY:-2}
 ```
 
 Open:
@@ -124,31 +135,152 @@ curl -X POST http://localhost:8000/api/v1/bots \
   -d '{"rig_id":1,"name":"bot-a"}'
 ```
 
-By default, writes are unauthenticated. To require admin-only writes:
+By default, writes are admin-only. To opt out:
 
 ```bash
-export JM_API_BOTS_WRITE_ADMIN_ONLY=true
+export JM_API_BOTS_WRITE_ADMIN_ONLY=false
 ```
 
-## Key endpoints
+## URL map / routing
 
-- Health: `GET /api/v1/healthz`
-- Auth:
-  - `POST /api/v1/auth/signup`
-  - `POST /api/v1/auth/login`
-  - `POST /api/v1/auth/refresh`
-  - `POST /api/v1/auth/logout`
-  - `GET /api/v1/auth/me`
-  - `GET /api/v1/auth/sessions`
-  - `DELETE /api/v1/auth/sessions/{session_jti}`
-  - `POST /api/v1/auth/sessions/revoke-others`
-- Bots:
-  - `GET /api/v1/bots`
-  - `POST /api/v1/bots`
-  - `GET /api/v1/bots/{bot_id}`
-  - `PUT /api/v1/bots/{bot_id}`
-  - `DELETE /api/v1/bots/{bot_id}`
-- Metrics: `GET /metrics`
+Assuming local server at `http://localhost:8000` and default API prefix `/api/v1`:
+
+### Admin frontend
+
+- `GET /admin` — static admin app mount
+- `GET /admin/login.html` — admin login page
+- `GET /admin/signup.html` — admin signup page
+- `GET /admin/index.html` — admin dashboard
+
+### Core/health + docs
+
+- `GET /api/v1/healthz` — health check
+- `GET /docs` — Swagger UI (when `JM_API_DOCS_ENABLED=true`)
+- `GET /redoc` — ReDoc (when docs enabled)
+- `GET /openapi.json` — OpenAPI schema (when docs enabled)
+
+### Auth endpoints
+
+- `POST /api/v1/auth/signup`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/refresh`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/auth/me`
+- `GET /api/v1/auth/sessions`
+- `DELETE /api/v1/auth/sessions/{session_jti}`
+- `POST /api/v1/auth/sessions/revoke-others`
+
+### Bot endpoints
+
+- `GET /api/v1/bots`
+- `POST /api/v1/bots` *(admin only by default; set `JM_API_BOTS_WRITE_ADMIN_ONLY=false` to opt out)*
+- `GET /api/v1/bots/{bot_id}`
+- `PUT /api/v1/bots/{bot_id}` *(admin only by default; set `JM_API_BOTS_WRITE_ADMIN_ONLY=false` to opt out)*
+- `DELETE /api/v1/bots/{bot_id}` *(admin only by default; set `JM_API_BOTS_WRITE_ADMIN_ONLY=false` to opt out)*
+
+`GET /api/v1/bots` supports:
+
+- `page`, `per_page`
+- `rig_id`
+- `kill_switch`
+- `log_search`
+- `create_at_after`, `create_at_before`
+- `last_update_at_after`, `last_update_at_before`
+- `last_run_at_after`, `last_run_at_before`
+
+### Metrics / observability endpoints
+
+- `GET /metrics` — Prometheus scrape endpoint (default)
+
+## Environment variables
+
+All settings use the `JM_API_` prefix.
+
+### Required
+
+- `JM_API_DATABASE_URL` (example: `sqlite:///./dev.db`)
+- `JM_API_JWT_SECRET_KEY` (set a non-default value)
+
+### Commonly used local settings
+
+- `JM_API_ENVIRONMENT=development`
+- `JM_API_DEBUG=false`
+- `JM_API_API_V1_PREFIX=/api/v1`
+- `JM_API_DOCS_ENABLED=true`
+- `JM_API_LOG_LEVEL=INFO`
+- `JM_API_LOG_JSON=true`
+- `JM_API_REQUEST_ID_HEADER=X-Request-ID`
+- `JM_API_ALLOW_ORIGINS=http://localhost:3000,http://localhost:8000`
+- `JM_API_ALLOWED_HOSTS=localhost,127.0.0.1`
+- `JM_API_BOTS_WRITE_ADMIN_ONLY=true` *(default; set to `false` to disable admin-only write protection — startup warning is logged when disabled)*
+
+### Auth/JWT settings
+
+- `JM_API_JWT_ALGORITHM=HS256`
+- `JM_API_JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15`
+- `JM_API_JWT_REFRESH_TOKEN_EXPIRE_DAYS=7`
+
+### Session store settings (refresh-token revocation)
+
+Refresh-token revocation is persisted in SQL via the `session_tokens` table.
+
+### Security hardening for internet exposure
+
+- **CSRF protection**: refresh/logout/session-management endpoints require `X-CSRF-Token` matching the `csrf_token` cookie (double-submit cookie pattern).
+- **Session binding**: refresh-token rotation is bound to a device fingerprint (`user-agent` hash) and source IP subnet (`/24` IPv4, `/64` IPv6).
+- **JWT secret rotation**: configure `JM_API_JWT_SIGNING_KEYS` as comma-separated keys. If set, only these keys are used (first signs new JWTs; all verify during rollover). `JM_API_JWT_SECRET_KEY` is used only when `JM_API_JWT_SIGNING_KEYS` is empty.
+- **Security audit logs**: auth actions emit structured `security.audit` events including `event_type`, `outcome`, `ip`, `user_agent`, and optional risk flags.
+
+- `JM_API_SESSION_CLEANUP_INTERVAL_SECONDS=300` (opportunistic cleanup interval in API process)
+
+### Observability settings
+
+- `JM_API_METRICS_ENABLED=true`
+- `JM_API_METRICS_PATH=/metrics`
+- `JM_API_SLOW_QUERY_THRESHOLD_MS=500`
+- `JM_API_TRACING_ENABLED=false`
+- `JM_API_TRACING_SERVICE_NAME=jm-api`
+- `JM_API_TRACING_SERVICE_VERSION=0.1.0`
+- `JM_API_TRACING_JAEGER_HOST=localhost`
+- `JM_API_TRACING_JAEGER_PORT=6831`
+
+## Database migrations (Alembic)
+
+This project uses Alembic for schema migrations.
+
+### Commands
+
+```bash
+# Apply all migrations
+make migrate
+
+# Create a new migration from model changes
+make migrate-create msg="describe change"
+```
+
+You can also run Alembic directly:
+
+```bash
+uv run alembic upgrade head
+uv run alembic revision --autogenerate -m "describe change"
+```
+
+### Workflow
+
+1. Update SQLAlchemy models.
+2. Generate a migration (`make migrate-create ...`).
+3. Review/edit generated migration in `alembic/versions/`.
+4. Apply locally (`make migrate`).
+5. Run tests.
+
+### Startup migration gate
+
+On startup, the API verifies that the DB revision matches the Alembic head revision.
+If the DB is behind (or uninitialized), the app fails fast with an instruction to run migrations.
+
+You can disable this check in test/local scenarios:
+
+- `JM_API_DB_MIGRATION_CHECK_ENABLED=false`
 
 ## Testing
 
@@ -164,17 +296,16 @@ Run integration tests explicitly:
 uv run pytest -o addopts='' -m integration tests/integration
 ```
 
-## Deployment/process notes
+## Optional: local observability stack
 
-Procfile uses Gunicorn + Uvicorn workers:
+Start Prometheus + Grafana + Jaeger:
 
 ```bash
-gunicorn jm_api.main:app \
-  --worker-class uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:${PORT:-8000} \
-  --workers ${WEB_CONCURRENCY:-2}
+docker compose -f docker-compose.observability.yml up -d
 ```
 
-## Additional docs
+- Prometheus: http://localhost:9090
+- Grafana: http://localhost:3000
+- Jaeger: http://localhost:16686
 
-- Observability details: `docs/observability.md`
+See `docs/observability.md` for dashboard/query examples.
