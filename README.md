@@ -94,9 +94,7 @@ Open:
 
 - Swagger docs: http://localhost:8000/docs
 - Admin UI: http://localhost:8000/admin
-- Liveness check: http://localhost:8000/api/v1/live
-- Readiness check: http://localhost:8000/api/v1/ready
-- Deep health check: http://localhost:8000/api/v1/health
+- Health check: http://localhost:8000/api/v1/healthz
 
 ## Basic usage examples
 
@@ -182,10 +180,7 @@ Assuming local server at `http://localhost:8000` and default API prefix `/api/v1
 
 ### Core/health + docs
 
-- `GET /api/v1/live` — liveness probe (process is running)
-- `GET /api/v1/ready` — readiness probe (DB + migrations checks)
-- `GET /api/v1/health` — deep health check (DB connectivity + migration state)
-- `GET /api/v1/healthz` — legacy compatibility health endpoint
+- `GET /api/v1/healthz` — health check
 - `GET /docs` — Swagger UI (when `JM_API_DOCS_ENABLED=true`)
 - `GET /redoc` — ReDoc (when docs enabled)
 - `GET /openapi.json` — OpenAPI schema (when docs enabled)

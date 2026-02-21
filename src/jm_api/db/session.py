@@ -21,8 +21,7 @@ def init_db(app: FastAPI) -> None:
     Should be called during FastAPI lifespan startup.
     """
     settings = get_settings()
-    connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-    engine = create_engine(settings.database_url, connect_args=connect_args)
+    engine = create_engine(settings.database_url)
     instrument_sqlalchemy(engine, settings)
     session_factory = sessionmaker(
         autocommit=False,
