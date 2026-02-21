@@ -22,7 +22,7 @@ def _client_ip(request: Request) -> str:
                     ip_address(candidate)
                     return candidate
                 except ValueError:
-                    pass
+                    return get_remote_address(request)
     return get_remote_address(request)
 
 
@@ -36,7 +36,7 @@ def _request_tier_and_key(request: Request) -> tuple[str, str]:
                 return ("authenticated", f"user:{payload.sub}")
         except Exception:
             # Invalid/expired token should be treated as anonymous for limiting.
-            pass
+            return ("anonymous", f"ip:{_client_ip(request)}")
 
     return ("anonymous", f"ip:{_client_ip(request)}")
 
