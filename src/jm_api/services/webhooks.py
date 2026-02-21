@@ -27,7 +27,7 @@ def validate_webhook_url(url: str) -> None:
         raise ValueError("Webhook URL host is required")
 
     hostname = parsed.hostname.lower()
-    if hostname in {"localhost", "0.0.0.0"} or hostname.endswith(".local"):
+    if hostname == "localhost" or hostname.endswith(".local"):
         raise ValueError("Webhook URL points to a local/internal address")
 
     try:
@@ -35,7 +35,7 @@ def validate_webhook_url(url: str) -> None:
     except ValueError:
         ip = None
 
-    if ip is not None and (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved):
+    if ip is not None and (ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_unspecified):
         raise ValueError("Webhook URL points to a private/internal IP")
 
     try:
@@ -49,7 +49,13 @@ def validate_webhook_url(url: str) -> None:
             parsed_ip = ipaddress.ip_address(raw_ip)
         except ValueError:
             continue
-        if parsed_ip.is_private or parsed_ip.is_loopback or parsed_ip.is_link_local or parsed_ip.is_reserved:
+        if (
+            parsed_ip.is_private
+            or parsed_ip.is_loopback
+            or parsed_ip.is_link_local
+            or parsed_ip.is_reserved
+            or parsed_ip.is_unspecified
+        ):
             raise ValueError("Webhook URL resolves to a private/internal IP")
 
 
