@@ -60,6 +60,9 @@ class TestDatabaseUrlConfig:
             Settings(
                 environment="staging",
                 database_url="sqlite:///./staging.db",
+                jwt_secret_key="x" * 32,
+                rate_limit_storage_uri="redis://localhost:6379/0",
+                bots_write_admin_only=True,
             )
 
     def test_default_jwt_secret_not_allowed_in_production(self) -> None:
