@@ -78,6 +78,13 @@ class Settings(BaseSettings):
     trust_proxy_headers: bool = Field(default=False)
     bots_write_admin_only: bool = Field(default=False)
 
+    # API-wide and per-user rate limiting / quotas
+    rate_limit_storage_uri: str = Field(default="memory://")
+    rate_limit_api_per_minute: int = Field(default=120)
+    rate_limit_api_per_hour: int = Field(default=3000)
+    rate_limit_quota_per_day: int = Field(default=10000)
+    rate_limit_quota_per_month: int = Field(default=200000)
+
     model_config = SettingsConfigDict(
         env_prefix="JM_API_",
         env_file=".env",
