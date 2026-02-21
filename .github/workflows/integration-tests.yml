@@ -1,4 +1,4 @@
-name: Integration Tests
+name: CI
 
 on:
   pull_request:
@@ -12,9 +12,87 @@ permissions:
   contents: read
 
 jobs:
+  quality-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+
+      - name: Install dependencies
+        run: |
+          if [ -f uv.lock ]; then
+            uv sync --dev
+          else
+            python -m pip install --upgrade pip
+            if [ -f requirements.txt ]; then
+              pip install -r requirements.txt
+            fi
+            pip install -e ".[dev]"
+          fi
+
+      - name: Lint (ruff)
+        run: |
+          if [ -f uv.lock ]; then
+            uv run ruff check .
+          else
+            ruff check .
+          fi
+
+      - name: Type check (mypy)
+        run: |
+          if [ -f uv.lock ]; then
+            uv run mypy
+          else
+            mypy
+          fi
+
+      - name: Security scan (bandit)
+        run: |
+          if [ -f uv.lock ]; then
+            uv run bandit -q -r src -s B105,B106,B311
+          else
+            bandit -q -r src -s B105,B106,B311
+          fi
+
+      - name: Dependency vulnerability scan (pip-audit)
+        run: |
+          if [ -f requirements.txt ]; then
+            if [ -f uv.lock ]; then
+              uv run pip-audit -r requirements.txt --no-deps --disable-pip
+            else
+              pip-audit -r requirements.txt --no-deps --disable-pip
+            fi
+          else
+            if [ -f uv.lock ]; then
+              uv run pip-audit
+            else
+              pip-audit
+            fi
+          fi
+
   integration-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    needs: quality-gates
 
     env:
       JM_API_JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
