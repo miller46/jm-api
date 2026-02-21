@@ -17,6 +17,8 @@ from jm_api.db.base import Base
 from jm_api.models.bot import Bot
 from jm_api.models.session_token import SessionToken as _SessionToken  # noqa: F401
 from jm_api.models.user import User
+from jm_api.models.webhook import Webhook as _Webhook  # noqa: F401
+from jm_api.models.webhook import WebhookDeliveryLog as _WebhookDeliveryLog  # noqa: F401
 
 
 @pytest.fixture(scope="session", autouse=True)
