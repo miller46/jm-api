@@ -243,7 +243,22 @@ All settings use the `JM_API_` prefix.
 - `JM_API_REQUEST_ID_HEADER=X-Request-ID`
 - `JM_API_ALLOW_ORIGINS=http://localhost:3000,http://localhost:8000`
 - `JM_API_ALLOWED_HOSTS=localhost,127.0.0.1`
-- `JM_API_BOTS_WRITE_ADMIN_ONLY=true` *(default; set to `false` to disable admin-only write protection — startup warning is logged when disabled)*
+- `JM_API_BOTS_WRITE_ADMIN_ONLY=false` *(development default; required `true` in staging/production unless risk override is explicitly set)*
+- `JM_API_I_UNDERSTAND_RISK=false` *(escape hatch for temporary production exception when disabling admin-only bot writes)*
+- `JM_API_RATE_LIMIT_STORAGE_URI=memory://` *(development default; use Redis in staging/production)*
+- `JM_API_TRUST_PROXY_HEADERS=false`
+- `JM_API_TRUSTED_PROXY_CIDRS=` *(comma-separated, e.g. `10.0.0.0/8,172.16.0.0/12`)*
+
+### Production/staging startup invariants (fail-fast)
+
+When `JM_API_ENVIRONMENT` is `staging` or `production`, the app validates and refuses to start if any invariant is violated:
+
+- `JM_API_RATE_LIMIT_STORAGE_URI` **must not** be `memory://` (use Redis)
+- `JM_API_BOTS_WRITE_ADMIN_ONLY` must be `true`, unless `JM_API_I_UNDERSTAND_RISK=true` is explicitly set for a temporary exception
+- `JM_API_TRUST_PROXY_HEADERS=true` requires `JM_API_TRUSTED_PROXY_CIDRS` to be configured
+- JWT signing material must be at least 32 bytes per key (`JM_API_JWT_SECRET_KEY` or each key in `JM_API_JWT_SIGNING_KEYS`)
+
+In `development` and `test`, these checks are intentionally relaxed for local convenience.
 
 ### Auth/JWT settings
 
@@ -261,6 +276,15 @@ Refresh-token revocation is persisted in SQL via the `session_tokens` table.
 - **Session binding**: refresh-token rotation is bound to a device fingerprint (`user-agent` hash) and source IP subnet (`/24` IPv4, `/64` IPv6).
 - **JWT secret rotation**: configure `JM_API_JWT_SIGNING_KEYS` as comma-separated keys. If set, only these keys are used (first signs new JWTs; all verify during rollover). `JM_API_JWT_SECRET_KEY` is used only when `JM_API_JWT_SIGNING_KEYS` is empty.
 - **Security audit logs**: auth actions emit structured `security.audit` events including `event_type`, `outcome`, `ip`, `user_agent`, and optional risk flags.
+
+### Production/staging startup invariants (fail-fast)
+
+When `JM_API_ENVIRONMENT` is `staging` or `production`, startup will fail unless all of the following are true:
+
+- `JM_API_RATE_LIMIT_STORAGE_URI` is **not** `memory://` (Redis required)
+- `JM_API_BOTS_WRITE_ADMIN_ONLY=true` *(or set `JM_API_I_UNDERSTAND_RISK=true` for an explicit temporary exception)*
+- if `JM_API_TRUST_PROXY_HEADERS=true`, then `JM_API_TRUSTED_PROXY_CIDRS` must be configured with valid CIDRs
+- Effective JWT signing key(s) must be at least 32 bytes (`JM_API_JWT_SECRET_KEY` or each entry in `JM_API_JWT_SIGNING_KEYS`)
 
 - `JM_API_SESSION_CLEANUP_INTERVAL_SECONDS=300` (opportunistic cleanup interval in API process)
 
