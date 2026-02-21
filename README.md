@@ -130,6 +130,32 @@ By default, writes are unauthenticated. To require admin-only writes:
 export JM_API_BOTS_WRITE_ADMIN_ONLY=true
 ```
 
+## Rate limiting and quotas
+
+The API enforces global throttling and identity-based quotas.
+
+- API-wide limits (per identity):
+  - `JM_API_RATE_LIMIT_API_PER_MINUTE` (default: `120`)
+  - `JM_API_RATE_LIMIT_API_PER_HOUR` (default: `3000`)
+- Per-identity quotas:
+  - `JM_API_RATE_LIMIT_QUOTA_PER_DAY` (default: `10000`)
+  - `JM_API_RATE_LIMIT_QUOTA_PER_MONTH` (default: `200000`)
+- Storage backend:
+  - `JM_API_RATE_LIMIT_STORAGE_URI` (default: `memory://`)
+  - Use Redis in multi-worker deployments, e.g. `redis://localhost:6379/0`
+
+Identity is determined as:
+- Authenticated requests: per user (`Authorization: Bearer ...`)
+- Anonymous requests: per client IP
+
+When limits are exceeded, API returns `429 Too Many Requests` with:
+- `Retry-After`
+- `X-RateLimit-Limit`
+- `X-RateLimit-Remaining`
+- `X-RateLimit-Reset`
+
+Login and signup also retain their stricter endpoint-specific protection (`5 per 15 minutes`).
+
 ## Key endpoints
 
 - Health: `GET /api/v1/healthz`
