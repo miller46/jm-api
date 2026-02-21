@@ -94,7 +94,9 @@ Open:
 
 - Swagger docs: http://localhost:8000/docs
 - Admin UI: http://localhost:8000/admin
-- Health check: http://localhost:8000/api/v1/healthz
+- Liveness check: http://localhost:8000/api/v1/live
+- Readiness check: http://localhost:8000/api/v1/ready
+- Deep health check: http://localhost:8000/api/v1/health
 
 ## Basic usage examples
 
@@ -141,6 +143,32 @@ By default, writes are admin-only. To opt out:
 export JM_API_BOTS_WRITE_ADMIN_ONLY=false
 ```
 
+## Rate limiting and quotas
+
+The API enforces global throttling and identity-based quotas.
+
+- API-wide limits (per identity):
+  - `JM_API_RATE_LIMIT_API_PER_MINUTE` (default: `120`)
+  - `JM_API_RATE_LIMIT_API_PER_HOUR` (default: `3000`)
+- Per-identity quotas:
+  - `JM_API_RATE_LIMIT_QUOTA_PER_DAY` (default: `10000`)
+  - `JM_API_RATE_LIMIT_QUOTA_PER_MONTH` (default: `200000`)
+- Storage backend:
+  - `JM_API_RATE_LIMIT_STORAGE_URI` (default: `memory://`)
+  - Use Redis in multi-worker deployments, e.g. `redis://localhost:6379/0`
+
+Identity is determined as:
+- Authenticated requests: per user (`Authorization: Bearer ...`)
+- Anonymous requests: per client IP
+
+When limits are exceeded, API returns `429 Too Many Requests` with:
+- `Retry-After`
+- `X-RateLimit-Limit`
+- `X-RateLimit-Remaining`
+- `X-RateLimit-Reset`
+
+Login and signup also retain their stricter endpoint-specific protection (`5 per 15 minutes`).
+
 ## URL map / routing
 
 Assuming local server at `http://localhost:8000` and default API prefix `/api/v1`:
@@ -154,7 +182,10 @@ Assuming local server at `http://localhost:8000` and default API prefix `/api/v1
 
 ### Core/health + docs
 
-- `GET /api/v1/healthz` — health check
+- `GET /api/v1/live` — liveness probe (process is running)
+- `GET /api/v1/ready` — readiness probe (DB + migrations checks)
+- `GET /api/v1/health` — deep health check (DB connectivity + migration state)
+- `GET /api/v1/healthz` — legacy compatibility health endpoint
 - `GET /docs` — Swagger UI (when `JM_API_DOCS_ENABLED=true`)
 - `GET /redoc` — ReDoc (when docs enabled)
 - `GET /openapi.json` — OpenAPI schema (when docs enabled)
@@ -299,6 +330,22 @@ If the DB is behind (or uninitialized), the app fails fast with an instruction t
 You can disable this check in test/local scenarios:
 
 - `JM_API_DB_MIGRATION_CHECK_ENABLED=false`
+
+## CI pipeline
+
+GitHub Actions runs the `CI` workflow on pushes and pull requests to `main`.
+
+Order of checks:
+- `quality-gates` job (fast-fail):
+  - `ruff check .` (lint)
+  - `mypy` (type checks)
+  - `bandit -r src` (security scan)
+  - `pip-audit -r requirements.txt` (dependency vulnerability scan)
+- `integration-tests` job:
+  - runs only after `quality-gates` passes
+  - validates Alembic migrations and runs integration tests
+
+Because `integration-tests` depends on `quality-gates`, any failing lint/type/security/dependency check blocks merges on protected branches.
 
 ## Testing
 

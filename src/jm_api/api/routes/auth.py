@@ -7,8 +7,7 @@ from ipaddress import ip_address
 from secrets import token_urlsafe
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from jm_api.api.rate_limit import limiter
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -45,8 +44,6 @@ from jm_api.schemas.auth import (
     UserCreate,
     UserResponse,
 )
-
-limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 logger = structlog.get_logger(__name__)

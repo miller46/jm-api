@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+from time import time
 
+import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
@@ -20,13 +23,39 @@ from jm_api.core.observability import install_metrics, install_tracing
 from jm_api.middleware.request_id import RequestIdMiddleware
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
+logger = structlog.get_logger(__name__)
 
 
 def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
     """Handle rate limit exceeded errors."""
+    logger.warning(
+        "rate_limit.exceeded",
+        path=request.url.path,
+        method=request.method,
+        request_id=getattr(request.state, "request_id", None),
+    )
+
+    headers = dict(getattr(exc, "headers", {}) or {})
+    if "Retry-After" not in headers:
+        headers["Retry-After"] = "60"
+
+    raw_detail = str(getattr(exc, "detail", ""))
+    match = re.search(r"(\d+)\s+per\s+(\d+)\s+(second|minute|hour|day|month)", raw_detail)
+    if match:
+        limit = match.group(1)
+        window = int(match.group(2))
+        unit = match.group(3)
+        seconds_per_unit = {"second": 1, "minute": 60, "hour": 3600, "day": 86400, "month": 2592000}
+        retry_after = str(window * seconds_per_unit[unit])
+        headers.setdefault("Retry-After", retry_after)
+        headers.setdefault("X-RateLimit-Limit", limit)
+    headers.setdefault("X-RateLimit-Remaining", "0")
+    headers.setdefault("X-RateLimit-Reset", str(int(time()) + int(headers["Retry-After"])))
+
     return JSONResponse(
         status_code=429,
         content={"detail": "Rate limit exceeded. Please try again later."},
+        headers=headers,
     )
 
 

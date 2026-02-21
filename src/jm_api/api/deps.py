@@ -395,7 +395,8 @@ def is_refresh_token_revoked(db: Session, token: str) -> bool:
 def get_refresh_token_jti(token: str) -> str:
     """Get refresh token JTI."""
     payload = _decode_refresh_token_payload(token)
-    assert payload.jti is not None
+    if payload.jti is None:
+        raise ValueError("Refresh token is missing jti")
     return payload.jti
 
 

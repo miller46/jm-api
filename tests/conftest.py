@@ -46,7 +46,7 @@ def monkeypatch_session():
 @pytest.fixture(autouse=True)
 def reset_rate_limit_storage():
     """Reset rate limiter storage before each test."""
-    from jm_api.api.routes.auth import limiter
+    from jm_api.api.rate_limit import limiter
     # Reset the limiter storage
     limiter.reset()
     yield
