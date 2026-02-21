@@ -120,12 +120,11 @@ curl "http://localhost:8000/api/v1/bots?page=1&per_page=20"
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/bots \
-  -H "Authorization: Bearer <ACCESS_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"rig_id":1,"name":"bot-a"}'
 ```
 
-By default, writes are open to authenticated users. To require admin-only writes:
+By default, writes are unauthenticated. To require admin-only writes:
 
 ```bash
 export JM_API_BOTS_WRITE_ADMIN_ONLY=true
