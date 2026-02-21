@@ -884,26 +884,18 @@ class TestSessionManagement:
 class TestRateLimiting:
     """Test rate limiting on login endpoint."""
 
-    @pytest.mark.xfail(reason="Rate limiting uses shared in-memory storage across tests")
     def test_login_rate_limit(self, client: TestClient, test_user: User) -> None:
-        """Test that login is rate limited after 5 attempts.
-        
-        Note: This test may fail when run with other tests due to shared rate limit state.
-        """
-        # Make 5 failed login attempts
+        """Test that login is rate limited after 5 attempts and returns standard headers."""
         for i in range(5):
             response = client.post(
                 "/api/v1/auth/login",
                 json={
-                    "email": f"test{i}@example.com",  # Use different emails to avoid rate limit
+                    "email": f"test{i}@example.com",
                     "password": "wrongpassword",
                 },
             )
-            # Expect 401 for the first 5 attempts (if they were valid emails) 
-            # or 401 for invalid email
-            assert response.status_code in (status.HTTP_401_UNAUTHORIZED,)
+            assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-        # 6th attempt with same IP should be rate limited
         response = client.post(
             "/api/v1/auth/login",
             json={
@@ -911,8 +903,11 @@ class TestRateLimiting:
                 "password": "wrongpassword",
             },
         )
-        # This may be 429 if rate limited or 401 if not
-        assert response.status_code in (status.HTTP_429_TOO_MANY_REQUESTS, status.HTTP_401_UNAUTHORIZED)
+        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        assert response.headers.get("Retry-After") is not None
+        assert response.headers.get("X-RateLimit-Limit") is not None
+        assert response.headers.get("X-RateLimit-Remaining") is not None
+        assert response.headers.get("X-RateLimit-Reset") is not None
 
 
 class TestUserModel:
