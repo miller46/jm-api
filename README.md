@@ -385,6 +385,30 @@ Run integration tests explicitly:
 uv run pytest -o addopts='' -m integration tests/integration
 ```
 
+## Container deployment
+
+Deployment artifacts added in this repository:
+
+- `Dockerfile` (multi-stage, non-root runtime user, built-in health check)
+- `.dockerignore` (reduced build context)
+- `.env.example` (documented runtime environment template)
+- `docs/deployment.md` (startup, migration flow, rollback, platform examples)
+
+Typical flow:
+
+```bash
+docker build -t ghcr.io/miller46/jm-api:<tag> .
+docker run --rm --env-file .env -p 8000:8000 ghcr.io/miller46/jm-api:<tag>
+```
+
+Run migrations before app rollout:
+
+```bash
+docker run --rm --env-file .env ghcr.io/miller46/jm-api:<tag> alembic upgrade head
+```
+
+See `docs/deployment.md` for complete deployment and rollback runbooks.
+
 ## Optional: local observability stack
 
 Start Prometheus + Grafana + Jaeger:
