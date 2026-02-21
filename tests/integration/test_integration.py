@@ -16,13 +16,28 @@ pytestmark = pytest.mark.integration
 
 
 class TestHealthEndpoint:
-    """Tests for GET /api/v1/healthz."""
+    """Tests for health/readiness/liveness endpoints."""
+
+    def test_live_returns_200_with_ok_body(self, http_client: httpx.Client) -> None:
+        resp = http_client.get("/api/v1/live")
+
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
 
     def test_healthz_returns_200_with_ok_body(self, http_client: httpx.Client) -> None:
         resp = http_client.get("/api/v1/healthz")
 
         assert resp.status_code == 200
         assert resp.json() == {"status": "ok"}
+
+    def test_health_and_ready_return_structured_checks(self, http_client: httpx.Client) -> None:
+        for path in ("/api/v1/health", "/api/v1/ready"):
+            resp = http_client.get(path)
+            assert resp.status_code == 200
+            body = resp.json()
+            assert body["status"] == "ok"
+            assert body["checks"]["database"]["status"] == "pass"
+            assert body["checks"]["migrations"]["status"] == "pass"
 
     def test_healthz_includes_x_request_id_header(self, http_client: httpx.Client) -> None:
         resp = http_client.get("/api/v1/healthz")
