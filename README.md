@@ -101,10 +101,10 @@ Assuming local server at `http://localhost:8000` and default API prefix `/api/v1
 ### Bot endpoints
 
 - `GET /api/v1/bots`
-- `POST /api/v1/bots` *(admin only)*
+- `POST /api/v1/bots` *(admin only by default; set `JM_API_BOTS_WRITE_ADMIN_ONLY=false` to opt out)*
 - `GET /api/v1/bots/{bot_id}`
-- `PUT /api/v1/bots/{bot_id}` *(admin only)*
-- `DELETE /api/v1/bots/{bot_id}` *(admin only)*
+- `PUT /api/v1/bots/{bot_id}` *(admin only by default; set `JM_API_BOTS_WRITE_ADMIN_ONLY=false` to opt out)*
+- `DELETE /api/v1/bots/{bot_id}` *(admin only by default; set `JM_API_BOTS_WRITE_ADMIN_ONLY=false` to opt out)*
 
 `GET /api/v1/bots` supports:
 
@@ -140,6 +140,7 @@ All settings use the `JM_API_` prefix.
 - `JM_API_REQUEST_ID_HEADER=X-Request-ID`
 - `JM_API_ALLOW_ORIGINS=http://localhost:3000,http://localhost:8000`
 - `JM_API_ALLOWED_HOSTS=localhost,127.0.0.1`
+- `JM_API_BOTS_WRITE_ADMIN_ONLY=true` *(default; set to `false` to disable admin-only write protection — startup warning is logged when disabled)*
 
 ### Auth/JWT settings
 
