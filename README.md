@@ -39,6 +39,15 @@ Current functionality includes:
    uv run uvicorn jm_api.main:app --reload
    ```
 
+   **Production process model (Procfile):**
+
+   ```bash
+   gunicorn jm_api.main:app \
+     --worker-class uvicorn.workers.UvicornWorker \
+     --bind 0.0.0.0:${PORT:-8000} \
+     --workers ${WEB_CONCURRENCY:-2}
+   ```
+
 4. **Open the app**
    - API docs: http://localhost:8000/docs
    - Admin UI: http://localhost:8000/admin
