@@ -1,7 +1,7 @@
 """add indexes for bot list/filter query patterns
 
-Revision ID: 20260220_000002
-Revises: 20260220_000001
+Revision ID: 20260220_000003
+Revises: 20260220_000002
 Create Date: 2026-02-20 21:35:00
 """
 
@@ -10,8 +10,8 @@ from __future__ import annotations
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision = "20260220_000002"
-down_revision = "20260220_000001"
+revision = "20260220_000003"
+down_revision = "20260220_000002"
 branch_labels = None
 depends_on = None
 
