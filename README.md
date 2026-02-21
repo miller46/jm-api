@@ -304,6 +304,24 @@ uv run alembic revision --autogenerate -m "describe change"
 4. Apply locally (`make migrate`).
 5. Run tests.
 
+### Bot table index strategy
+
+Migration `20260220_000002_add_bots_indexes` adds explicit indexes for the most common bot list/filter patterns:
+
+- Single-column: `rig_id`, `kill_switch`, `create_at`, `last_update_at`, `last_run_at`
+- Composite: `(rig_id, kill_switch)` and `(kill_switch, last_run_at)`
+
+> Note: this codebase uses `create_at`/`last_update_at` column names (not `created_at`/`last_updated_at`).
+
+To validate planner improvements in PostgreSQL, run:
+
+```sql
+EXPLAIN ANALYZE SELECT * FROM bots WHERE rig_id = 'rig-001';
+EXPLAIN ANALYZE SELECT * FROM bots WHERE kill_switch = false;
+EXPLAIN ANALYZE SELECT * FROM bots ORDER BY create_at DESC LIMIT 50;
+EXPLAIN ANALYZE SELECT * FROM bots WHERE kill_switch = false ORDER BY last_run_at DESC LIMIT 50;
+```
+
 ### Startup migration gate
 
 On startup, the API verifies that the DB revision matches the Alembic head revision.
