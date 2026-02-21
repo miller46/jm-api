@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-
+import logging
 import os
+
+from fastapi import APIRouter
 
 from jm_api.api.deps import ADMIN_ONLY
 
@@ -64,11 +65,39 @@ _delete_router = create_delete_router(
 router = APIRouter()
 router.include_router(_read_router)
 
-def _env_flag(name: str, default: str = "false") -> bool:
-    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+logger = logging.getLogger(__name__)
 
 
-_bots_write_admin_only = _env_flag("JM_API_BOTS_WRITE_ADMIN_ONLY")
+def _env_flag(name: str, default: bool = True) -> tuple[bool, bool]:
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default, False
+
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True, True
+    if normalized in {"0", "false", "no", "off"}:
+        return False, True
+
+    logger.warning(
+        "Invalid value for %s=%r; defaulting to %s",
+        name,
+        raw_value,
+        default,
+    )
+    return default, True
+
+
+_bots_write_admin_only, _bots_write_admin_only_explicit = _env_flag(
+    "JM_API_BOTS_WRITE_ADMIN_ONLY",
+    default=True,
+)
+if _bots_write_admin_only_explicit and not _bots_write_admin_only:
+    logger.warning(
+        "Bot write protection is DISABLED via JM_API_BOTS_WRITE_ADMIN_ONLY=false; "
+        "write endpoints are not admin-restricted."
+    )
+
 _write_dependencies = ADMIN_ONLY if _bots_write_admin_only else None
 
 router.include_router(_create_router, dependencies=_write_dependencies)
