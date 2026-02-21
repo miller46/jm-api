@@ -1,75 +1,144 @@
-# JM API
+# jm-api
 
 [![Integration Tests](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml/badge.svg?branch=main)](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml)
 
-JM API is a FastAPI + SQLAlchemy backend with JWT-based authentication, an admin web frontend, and built-in observability (metrics, tracing, structured logs).
+FastAPI + SQLAlchemy backend with JWT auth, bot management endpoints, a small admin web UI, and built-in observability.
 
-## Overview
+## What this project includes
 
-Current functionality includes:
+- Auth API: signup, login, refresh, logout, current user, and session management
+- Bot API: CRUD + pagination + filter support
+- Admin frontend served at `/admin`
+- Alembic migrations
+- Observability: structured logs, request IDs, Prometheus metrics, optional OpenTelemetry tracing
+- Safety defaults: SQLite allowed for local dev, rejected for `staging`/`production`
+- Bot write protection is secure by default (`JM_API_BOTS_WRITE_ADMIN_ONLY=true`)
 
-- **Authentication**: signup, login, token refresh, logout, and `/auth/me` user introspection
-- **Bots API**: CRUD endpoints with pagination and filter support
-- **Admin frontend**: static UI served at `/admin` for login/signup and bot management
-- **Observability**:
-  - JSON structured logs with request IDs
-  - Prometheus metrics endpoint
-  - OpenTelemetry tracing (Jaeger exporter)
-  - slow query logging
-- **Safety defaults**: SQLite allowed for local dev, rejected for `staging`/`production`
+## Project structure
 
-## Quickstart (new developers)
-
-1. **Install dependencies**
-
-   ```bash
-   uv sync
-   ```
-
-2. **Set required local environment variables**
-
-   ```bash
-   export JM_API_DATABASE_URL="sqlite:///./dev.db"
-   export JM_API_JWT_SECRET_KEY="dev-secret-change-me"
-   ```
-
-3. **Run the API**
-
-   ```bash
-   uv run uvicorn jm_api.main:app --reload
-   ```
-
-   **Production process model (Procfile):**
-
-   ```bash
-   gunicorn jm_api.main:app \
-     --worker-class uvicorn.workers.UvicornWorker \
-     --bind 0.0.0.0:${PORT:-8000} \
-     --workers ${WEB_CONCURRENCY:-2}
-   ```
-
-4. **Open the app**
-   - API docs: http://localhost:8000/docs
-   - Admin UI: http://localhost:8000/admin
-
-## Running tests
-
-### Default test suite (unit + non-integration)
-
-```bash
-uv run pytest
+```text
+src/jm_api/
+  app.py                 # FastAPI app factory and middleware wiring
+  main.py                # ASGI entrypoint (jm_api.main:app)
+  api/
+    router.py            # top-level API router (/api/v1)
+    routes/
+      auth.py            # auth + session endpoints
+      bots.py            # bot CRUD endpoints
+      health.py          # health check endpoint
+    generic/             # reusable CRUD/filter helpers
+  core/
+    config.py            # JM_API_* settings
+    logging.py           # structured logging setup
+    observability.py     # metrics + tracing setup
+    lifespan.py          # startup/shutdown lifecycle
+  db/
+    session.py           # SQLAlchemy session dependency
+    migrations.py        # migration-state checks
+  models/                # SQLAlchemy models
+  schemas/               # pydantic request/response schemas
+  middleware/
+    request_id.py
+  static/                # admin frontend assets
+alembic/                 # DB migrations
+tests/
+  unit + API tests       # default pytest run
+  integration/           # full-stack integration tests
 ```
 
-### Integration tests (exact commands)
+## Quickstart
 
-The project config excludes integration tests by default, so use `-o addopts=''` to run them explicitly.
+### 1) Install dependencies
 
 ```bash
-# Run all integration tests
-uv run pytest -o addopts='' -m integration tests/integration
+uv sync
+```
 
-# Run one integration test module
-uv run pytest -o addopts='' -m integration tests/integration/test_integration.py
+### 2) Configure local environment
+
+```bash
+export JM_API_DATABASE_URL="sqlite:///./dev.db"
+export JM_API_JWT_SECRET_KEY="dev-secret-change-me"
+```
+
+Optional but common for local work:
+
+```bash
+export JM_API_ENVIRONMENT=development
+export JM_API_DOCS_ENABLED=true
+export JM_API_API_V1_PREFIX=/api/v1
+```
+
+### 3) Run database migrations
+
+```bash
+make migrate
+```
+
+### 4) Start the API
+
+```bash
+uv run uvicorn jm_api.main:app --reload
+```
+
+Production process model (Procfile):
+
+```bash
+gunicorn jm_api.main:app \
+  --worker-class uvicorn.workers.UvicornWorker \
+  --bind 0.0.0.0:${PORT:-8000} \
+  --workers ${WEB_CONCURRENCY:-2}
+```
+
+Open:
+
+- Swagger docs: http://localhost:8000/docs
+- Admin UI: http://localhost:8000/admin
+- Health check: http://localhost:8000/api/v1/healthz
+
+## Basic usage examples
+
+Base URL assumes `http://localhost:8000/api/v1`.
+
+### Signup
+
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email":"dev@example.com","password":"secret123"}'
+```
+
+### Login
+
+```bash
+curl -i -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"dev@example.com","password":"secret123"}'
+```
+
+Notes:
+- Response contains `access_token`
+- Login also sets `refresh_token` and `csrf_token` cookies
+- Response header includes `X-CSRF-Token`
+
+### List bots
+
+```bash
+curl "http://localhost:8000/api/v1/bots?page=1&per_page=20"
+```
+
+### Create bot
+
+```bash
+curl -X POST http://localhost:8000/api/v1/bots \
+  -H "Content-Type: application/json" \
+  -d '{"rig_id":1,"name":"bot-a"}'
+```
+
+By default, writes are admin-only. To opt out:
+
+```bash
+export JM_API_BOTS_WRITE_ADMIN_ONLY=false
 ```
 
 ## URL map / routing
@@ -97,6 +166,9 @@ Assuming local server at `http://localhost:8000` and default API prefix `/api/v1
 - `POST /api/v1/auth/refresh`
 - `POST /api/v1/auth/logout`
 - `GET /api/v1/auth/me`
+- `GET /api/v1/auth/sessions`
+- `DELETE /api/v1/auth/sessions/{session_jti}`
+- `POST /api/v1/auth/sessions/revoke-others`
 
 ### Bot endpoints
 
@@ -120,7 +192,7 @@ Assuming local server at `http://localhost:8000` and default API prefix `/api/v1
 
 - `GET /metrics` — Prometheus scrape endpoint (default)
 
-## Environment variables (local development)
+## Environment variables
 
 All settings use the `JM_API_` prefix.
 
@@ -156,14 +228,21 @@ Refresh-token revocation is persisted in SQL via the `session_tokens` table.
 
 - **CSRF protection**: refresh/logout/session-management endpoints require `X-CSRF-Token` matching the `csrf_token` cookie (double-submit cookie pattern).
 - **Session binding**: refresh-token rotation is bound to a device fingerprint (`user-agent` hash) and source IP subnet (`/24` IPv4, `/64` IPv6).
-- **Session management**:
-  - `GET /api/v1/auth/sessions`
-  - `DELETE /api/v1/auth/sessions/{session_jti}`
-  - `POST /api/v1/auth/sessions/revoke-others`
 - **JWT secret rotation**: configure `JM_API_JWT_SIGNING_KEYS` as comma-separated keys. If set, only these keys are used (first signs new JWTs; all verify during rollover). `JM_API_JWT_SECRET_KEY` is used only when `JM_API_JWT_SIGNING_KEYS` is empty.
 - **Security audit logs**: auth actions emit structured `security.audit` events including `event_type`, `outcome`, `ip`, `user_agent`, and optional risk flags.
 
 - `JM_API_SESSION_CLEANUP_INTERVAL_SECONDS=300` (opportunistic cleanup interval in API process)
+
+### Observability settings
+
+- `JM_API_METRICS_ENABLED=true`
+- `JM_API_METRICS_PATH=/metrics`
+- `JM_API_SLOW_QUERY_THRESHOLD_MS=500`
+- `JM_API_TRACING_ENABLED=false`
+- `JM_API_TRACING_SERVICE_NAME=jm-api`
+- `JM_API_TRACING_SERVICE_VERSION=0.1.0`
+- `JM_API_TRACING_JAEGER_HOST=localhost`
+- `JM_API_TRACING_JAEGER_PORT=6831`
 
 ## Database migrations (Alembic)
 
@@ -203,16 +282,19 @@ You can disable this check in test/local scenarios:
 
 - `JM_API_DB_MIGRATION_CHECK_ENABLED=false`
 
-### Observability settings
+## Testing
 
-- `JM_API_METRICS_ENABLED=true`
-- `JM_API_METRICS_PATH=/metrics`
-- `JM_API_SLOW_QUERY_THRESHOLD_MS=500`
-- `JM_API_TRACING_ENABLED=false`
-- `JM_API_TRACING_SERVICE_NAME=jm-api`
-- `JM_API_TRACING_SERVICE_VERSION=0.1.0`
-- `JM_API_TRACING_JAEGER_HOST=localhost`
-- `JM_API_TRACING_JAEGER_PORT=6831`
+Run default tests (excludes integration marker):
+
+```bash
+uv run pytest
+```
+
+Run integration tests explicitly:
+
+```bash
+uv run pytest -o addopts='' -m integration tests/integration
+```
 
 ## Optional: local observability stack
 
@@ -227,27 +309,3 @@ docker compose -f docker-compose.observability.yml up -d
 - Jaeger: http://localhost:16686
 
 See `docs/observability.md` for dashboard/query examples.
-
-## Project structure
-
-```text
-src/jm_api/
-  main.py              # ASGI entrypoint
-  app.py               # FastAPI app factory
-  core/
-    config.py          # pydantic-settings config (JM_API_*)
-    logging.py         # structured logging
-    observability.py   # metrics + tracing wiring
-  api/
-    routes/
-      auth.py          # auth routes
-      health.py        # health route
-      bots.py          # bot CRUD routes
-  models/
-    bot.py
-    session_token.py
-    user.py
-  static/              # /admin frontend assets
-tests/
-  integration/         # real-server integration tests
-```
