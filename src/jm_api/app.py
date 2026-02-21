@@ -21,6 +21,7 @@ from jm_api.core.lifespan import lifespan
 from jm_api.core.logging import configure_logging
 from jm_api.core.observability import install_metrics, install_tracing
 from jm_api.middleware.request_id import RequestIdMiddleware
+from jm_api.middleware.security_headers import SecurityHeadersMiddleware
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
 logger = structlog.get_logger(__name__)
@@ -86,6 +87,15 @@ def create_app() -> FastAPI:
     app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
     app.add_middleware(RequestIdMiddleware, header_name=settings.request_id_header)
+
+    if settings.security_headers_enabled:
+        app.add_middleware(
+            SecurityHeadersMiddleware,
+            x_content_type_options=settings.security_header_x_content_type_options,
+            x_frame_options=settings.security_header_x_frame_options,
+            strict_transport_security=settings.security_header_hsts_value,
+            admin_csp=settings.security_header_admin_csp,
+        )
 
     if settings.allowed_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
