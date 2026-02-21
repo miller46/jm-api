@@ -30,6 +30,17 @@ class Settings(BaseSettings):
 
     request_id_header: str = Field(default="X-Request-ID")
 
+    security_headers_enabled: bool = Field(default=True)
+    security_header_x_content_type_options: str = Field(default="nosniff")
+    security_header_x_frame_options: str = Field(default="DENY")
+    security_header_hsts_max_age: int = Field(default=31536000)
+    security_header_hsts_include_subdomains: bool = Field(default=True)
+    security_header_hsts_preload: bool = Field(default=False)
+    security_header_admin_csp: str = Field(
+        default="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
+        "font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'self';"
+    )
+
     allow_origins: list[str] = Field(default_factory=list)
     cors_allow_credentials: bool = Field(default=True)
     cors_allow_methods: list[str] = Field(default_factory=lambda: ["*"])
@@ -167,6 +178,15 @@ class Settings(BaseSettings):
             raise ValueError("\n".join(errors))
 
         return self
+
+    @property
+    def security_header_hsts_value(self) -> str:
+        value = f"max-age={self.security_header_hsts_max_age}"
+        if self.security_header_hsts_include_subdomains:
+            value += "; includeSubDomains"
+        if self.security_header_hsts_preload:
+            value += "; preload"
+        return value
 
 
 @lru_cache
