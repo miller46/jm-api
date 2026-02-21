@@ -1,6 +1,10 @@
 """Shared test fixtures."""
 
+import os
 from datetime import datetime
+
+# Existing write-route tests expect open write access unless explicitly testing RBAC.
+os.environ.setdefault("JM_API_BOTS_WRITE_ADMIN_ONLY", "false")
 
 import pytest
 import sqlalchemy as sa
@@ -23,6 +27,8 @@ def set_test_env(monkeypatch_session):
     """
     monkeypatch_session.setenv("JM_API_DATABASE_URL", "sqlite:///:memory:")
     monkeypatch_session.setenv("JM_API_DB_MIGRATION_CHECK_ENABLED", "false")
+    # Existing write-route tests expect open write access unless explicitly testing RBAC.
+    monkeypatch_session.setenv("JM_API_BOTS_WRITE_ADMIN_ONLY", "false")
     # Clear settings cache to pick up test environment
     from jm_api.core.config import get_settings
     get_settings.cache_clear()
