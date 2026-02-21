@@ -15,9 +15,10 @@ class TestProcfile:
         content = (ROOT / "Procfile").read_text()
         assert content.startswith("web:")
 
-    def test_procfile_uses_uvicorn(self):
+    def test_procfile_uses_gunicorn_with_uvicorn_worker(self):
         content = (ROOT / "Procfile").read_text()
-        assert "uvicorn" in content
+        assert "gunicorn" in content
+        assert "uvicorn.workers.UvicornWorker" in content
 
     def test_procfile_references_app_entry_point(self):
         content = (ROOT / "Procfile").read_text()
@@ -83,6 +84,6 @@ class TestRequirementsTxt:
         assert "psycopg2" in content or "psycopg" in content
 
     def test_requirements_txt_contains_gunicorn(self):
-        """Gunicorn is the recommended WSGI/ASGI process manager on Heroku."""
+        """Gunicorn should be available as the production process manager."""
         content = (ROOT / "requirements.txt").read_text().lower()
-        assert "gunicorn" in content or "uvicorn" in content
+        assert "gunicorn" in content
