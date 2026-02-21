@@ -308,6 +308,22 @@ You can disable this check in test/local scenarios:
 
 - `JM_API_DB_MIGRATION_CHECK_ENABLED=false`
 
+## CI pipeline
+
+GitHub Actions runs the `CI` workflow on pushes and pull requests to `main`.
+
+Order of checks:
+- `quality-gates` job (fast-fail):
+  - `ruff check .` (lint)
+  - `mypy` (type checks)
+  - `bandit -r src` (security scan)
+  - `pip-audit -r requirements.txt` (dependency vulnerability scan)
+- `integration-tests` job:
+  - runs only after `quality-gates` passes
+  - validates Alembic migrations and runs integration tests
+
+Because `integration-tests` depends on `quality-gates`, any failing lint/type/security/dependency check blocks merges on protected branches.
+
 ## Testing
 
 Run default tests (excludes integration marker):
