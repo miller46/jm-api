@@ -16,7 +16,6 @@ from jm_api.api.generic import (
     create_update_router,
 )
 from jm_api.api.generic.filters import FilterField, FilterType
-from jm_api.core.config import get_settings
 from jm_api.models.bot import Bot
 from jm_api.schemas.bot import BotCreate, BotResponse, BotUpdate
 
