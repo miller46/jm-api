@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from ipaddress import ip_network
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,24 +20,6 @@ class Settings(BaseSettings):
     # No default - must be explicitly configured via JM_API_DATABASE_URL env var
     database_url: str = Field()
     db_migration_check_enabled: bool = Field(default=True)
-
-    @model_validator(mode="after")
-    def validate_database_url_for_environment(self) -> "Settings":
-        """Validate database_url is appropriate for the environment."""
-        if self.environment in _PRODUCTION_ENVIRONMENTS:
-            # Check if using any SQLite database (not suitable for production)
-            if self.database_url.startswith("sqlite"):
-                raise ValueError(
-                    "SQLite is not recommended for production. "
-                    "Use PostgreSQL or another production database."
-                )
-
-            if self.jwt_secret_key == _DEFAULT_JWT_SECRET:
-                raise ValueError(
-                    "Default JWT secret is not allowed in production/staging. "
-                    "Set JM_API_JWT_SECRET_KEY to a strong secret."
-                )
-        return self
 
     api_v1_prefix: str = Field(default="/api/v1")
 
@@ -76,7 +59,9 @@ class Settings(BaseSettings):
     jwt_refresh_token_expire_days: int = Field(default=7)
     session_cleanup_interval_seconds: int = Field(default=300)
     trust_proxy_headers: bool = Field(default=False)
+    trusted_proxy_cidrs: list[str] = Field(default_factory=list)
     bots_write_admin_only: bool = Field(default=False)
+    i_understand_risk: bool = Field(default=False)
 
     # API-wide and per-user rate limiting / quotas
     rate_limit_storage_uri: str = Field(default="memory://")
@@ -91,18 +76,9 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    @field_validator("allow_origins", "allowed_hosts", mode="before")
+    @field_validator("allow_origins", "allowed_hosts", "jwt_signing_keys", "trusted_proxy_cidrs", mode="before")
     @classmethod
     def split_csv(cls, value: object) -> list[str] | object:
-        if isinstance(value, str):
-            if not value.strip():
-                return []
-            return [item.strip() for item in value.split(",") if item.strip()]
-        return value
-
-    @field_validator("jwt_signing_keys", mode="before")
-    @classmethod
-    def split_signing_keys(cls, value: object) -> list[str] | object:
         if isinstance(value, str):
             if not value.strip():
                 return []
@@ -125,6 +101,72 @@ class Settings(BaseSettings):
         if not 0 < value <= 1:
             raise ValueError("log_sample_rate must be > 0 and <= 1")
         return value
+
+    @field_validator("trusted_proxy_cidrs")
+    @classmethod
+    def validate_trusted_proxy_cidrs(cls, value: list[str]) -> list[str]:
+        for cidr in value:
+            try:
+                ip_network(cidr, strict=False)
+            except ValueError as exc:
+                raise ValueError(f"Invalid proxy CIDR: {cidr}") from exc
+        return value
+
+    @model_validator(mode="after")
+    def validate_database_url_for_environment(self) -> "Settings":
+        """Validate production/staging deployment invariants."""
+        if self.environment not in _PRODUCTION_ENVIRONMENTS:
+            return self
+
+        errors: list[str] = []
+
+        if self.database_url.startswith("sqlite"):
+            errors.append(
+                "Production config error: SQLite is not recommended for production. "
+                "Use PostgreSQL or another production database."
+            )
+
+        if self.jwt_secret_key == _DEFAULT_JWT_SECRET and not self.jwt_signing_keys:
+            errors.append(
+                "Production config error: Default JWT secret is not allowed in "
+                "production/staging. Set JM_API_JWT_SECRET_KEY to a strong secret."
+            )
+
+        if self.rate_limit_storage_uri.strip().lower() == "memory://":
+            errors.append(
+                "Production config error: JM_API_RATE_LIMIT_STORAGE_URI cannot be memory:// "
+                "— use Redis for distributed rate limiting."
+            )
+
+        if not self.bots_write_admin_only and not self.i_understand_risk:
+            errors.append(
+                "Production config error: JM_API_BOTS_WRITE_ADMIN_ONLY must be true. "
+                "If you need a temporary exception, set JM_API_I_UNDERSTAND_RISK=true explicitly."
+            )
+
+        if self.trust_proxy_headers and not self.trusted_proxy_cidrs:
+            errors.append(
+                "Production config error: JM_API_TRUST_PROXY_HEADERS=true requires "
+                "JM_API_TRUSTED_PROXY_CIDRS to be configured (comma-separated CIDRs)."
+            )
+
+        effective_keys = [key for key in self.jwt_signing_keys if key] or [self.jwt_secret_key]
+        for index, key in enumerate(effective_keys, start=1):
+            if len(key.encode("utf-8")) < 32:
+                if self.jwt_signing_keys:
+                    errors.append(
+                        "Production config error: each JWT signing key in JM_API_JWT_SIGNING_KEYS "
+                        f"must be at least 32 bytes (key #{index} is too short)."
+                    )
+                else:
+                    errors.append(
+                        "Production config error: JM_API_JWT_SECRET_KEY must be at least 32 bytes."
+                    )
+
+        if errors:
+            raise ValueError("\n".join(errors))
+
+        return self
 
 
 @lru_cache
