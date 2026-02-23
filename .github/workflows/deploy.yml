@@ -35,9 +35,8 @@ jobs:
           echo "Waiting for deployment to stabilize..."
           sleep 30
           
-          # Get the Heroku app URL
-          APP_NAME="${{ secrets.HEROKU_APP_NAME }}"
-          HEALTH_URL="https://${APP_NAME}.herokuapp.com/api/v1/health"
+          # Use production base URL from repository variables
+          HEALTH_URL="${{ vars.PRODUCTION_BASE_URL }}/api/v1/health"
           
           echo "Checking health endpoint: ${HEALTH_URL}"
           
