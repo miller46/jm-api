@@ -45,4 +45,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import os,sys,urllib.request; prefix=os.getenv('JM_API_API_V1_PREFIX','/api/v1'); url=f'http://127.0.0.1:{os.getenv('PORT','8000')}{prefix}/live'; sys.exit(0 if urllib.request.urlopen(url, timeout=3).status==200 else 1)"
 
-CMD ["sh", "-c", "gunicorn jm_api.main:app --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000} --workers ${WEB_CONCURRENCY:-2}"]
+CMD ["sh", "-c", "gunicorn jm_api.main:app --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:${PORT:-8000} --workers ${WEB_CONCURRENCY:-4}"]
