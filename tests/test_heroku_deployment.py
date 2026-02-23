@@ -56,34 +56,42 @@ class TestRuntimeTxt:
         assert minor >= 11
 
 
-class TestRequirementsTxt:
-    """Heroku needs requirements.txt to detect a Python app and install deps."""
+class TestUvLock:
+    """Heroku uses uv.lock (with pyproject.toml) to detect a Python app and install deps."""
 
-    def test_requirements_txt_exists(self):
-        assert (ROOT / "requirements.txt").is_file()
+    def test_uv_lock_exists(self):
+        assert (ROOT / "uv.lock").is_file()
 
-    def test_requirements_txt_contains_fastapi(self):
-        content = (ROOT / "requirements.txt").read_text()
+    def test_uv_lock_contains_fastapi(self):
+        content = (ROOT / "uv.lock").read_text()
         assert "fastapi" in content.lower()
 
-    def test_requirements_txt_contains_uvicorn(self):
-        content = (ROOT / "requirements.txt").read_text()
+    def test_uv_lock_contains_uvicorn(self):
+        content = (ROOT / "uv.lock").read_text()
         assert "uvicorn" in content.lower()
 
-    def test_requirements_txt_contains_sqlalchemy(self):
-        content = (ROOT / "requirements.txt").read_text()
+    def test_uv_lock_contains_sqlalchemy(self):
+        content = (ROOT / "uv.lock").read_text()
         assert "sqlalchemy" in content.lower()
 
-    def test_requirements_txt_contains_pydantic_settings(self):
-        content = (ROOT / "requirements.txt").read_text()
+    def test_uv_lock_contains_pydantic_settings(self):
+        content = (ROOT / "uv.lock").read_text()
         assert "pydantic-settings" in content.lower() or "pydantic_settings" in content.lower()
 
-    def test_requirements_txt_contains_psycopg2(self):
+    def test_uv_lock_contains_psycopg2(self):
         """Production Heroku Postgres needs a pg driver."""
-        content = (ROOT / "requirements.txt").read_text().lower()
+        content = (ROOT / "uv.lock").read_text().lower()
         assert "psycopg2" in content or "psycopg" in content
 
-    def test_requirements_txt_contains_gunicorn(self):
+    def test_uv_lock_contains_gunicorn(self):
         """Gunicorn should be available as the production process manager."""
-        content = (ROOT / "requirements.txt").read_text().lower()
+        content = (ROOT / "uv.lock").read_text().lower()
         assert "gunicorn" in content
+
+
+class TestRequirementsTxt:
+    """requirements.txt should NOT exist when using uv (Heroku buildpack requirement)."""
+
+    def test_requirements_txt_does_not_exist(self):
+        """Multiple package manager files cause Heroku build failures."""
+        assert not (ROOT / "requirements.txt").is_file()
