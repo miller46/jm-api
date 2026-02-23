@@ -8,9 +8,22 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette import status
 from starlette.responses import JSONResponse
 
+from jm_api.core.config import get_settings
 from jm_api.db.migrations import DatabaseMigrationError, assert_database_is_up_to_date
 
 router = APIRouter(tags=["health"])
+
+
+@router.get("/meta")
+def deployment_metadata() -> JSONResponse:
+    """Return deployment metadata for verifying live code version."""
+    settings = get_settings()
+    payload = {
+        "git_sha": settings.git_sha,
+        "deployed_at": settings.deployed_at,
+        "environment": settings.environment,
+    }
+    return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
 
 
 @router.get("/live")
