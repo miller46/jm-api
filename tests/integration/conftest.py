@@ -1,4 +1,4 @@
-"""Integration test fixtures — real uvicorn server + file-based SQLite."""
+"""Integration test fixtures — real uvicorn server + PostgreSQL in CI, SQLite locally."""
 
 from __future__ import annotations
 
@@ -21,8 +21,16 @@ from jm_api.core.config import get_settings
 from jm_api.db.base import Base
 from jm_api.models.session_token import SessionToken as _SessionToken  # noqa: F401
 
-_SQLITE_PATH = Path("/tmp/jm_integration_test.db")
-_DATABASE_URL = f"sqlite:///{_SQLITE_PATH}"
+# Use PostgreSQL in CI, SQLite locally
+_CI = os.environ.get("CI", "false").lower() == "true"
+if _CI:
+    _DATABASE_URL = os.environ.get(
+        "JM_API_DATABASE_URL",
+        "postgresql://postgres:postgres@localhost:5432/test_db"
+    )
+else:
+    _SQLITE_PATH = Path("/tmp/jm_integration_test.db")
+    _DATABASE_URL = f"sqlite:///{_SQLITE_PATH}"
 
 
 def _find_free_port() -> int:
@@ -34,7 +42,7 @@ def _find_free_port() -> int:
 
 @pytest.fixture(scope="session")
 def integration_server():
-    """Start a real uvicorn server backed by a file-based SQLite DB.
+    """Start a real uvicorn server backed by PostgreSQL in CI or file-based SQLite locally.
 
     Yields the base URL (``http://127.0.0.1:<port>``).
     """
@@ -80,10 +88,12 @@ def integration_server():
     # 5. Teardown.
     server.should_exit = True
     thread.join(timeout=5)
-    Base.metadata.drop_all(engine)
+    # Only drop tables for SQLite - in CI with Postgres, we use a fresh DB per run
+    if not _CI:
+        Base.metadata.drop_all(engine)
+        if _SQLITE_PATH.exists():
+            _SQLITE_PATH.unlink()
     engine.dispose()
-    if _SQLITE_PATH.exists():
-        _SQLITE_PATH.unlink()
 
 
 @pytest.fixture(scope="session")
