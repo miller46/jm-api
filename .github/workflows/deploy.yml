@@ -21,14 +21,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install Heroku CLI
+        run: curl https://cli-assets.heroku.com/install.sh | sh
+
       - name: Deploy
-        env:
-          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
-          HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
         run: |
-          echo "machine git.heroku.com login heroku password $HEROKU_API_KEY" > ~/.netrc
-          chmod 600 ~/.netrc
-          git push https://git.heroku.com/${HEROKU_APP_NAME}.git HEAD:main
+          git push https://heroku:${{ secrets.HEROKU_API_KEY }}@git.heroku.com/${{ secrets.HEROKU_APP_NAME }}.git HEAD:main
 
       - name: Verify deployment health
         run: |
