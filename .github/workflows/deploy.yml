@@ -21,15 +21,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Deploy to Heroku
-        uses: akhileshns/heroku-deploy@v3.14.15
-        with:
-          heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
-          # TEMPORARY: Hardcoded for debugging CD pipeline
-          # TODO: Revert to secrets.HEROKU_APP_NAME after debugging
-          heroku_app_name: jm-api
-          heroku_email: ${{ secrets.HEROKU_EMAIL }}
-          branch: main
+      - name: Deploy
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+          HEROKU_APP_NAME: ${{ secrets.HEROKU_APP_NAME }}
+        run: |
+          echo "machine git.heroku.com login heroku password $HEROKU_API_KEY" > ~/.netrc
+          chmod 600 ~/.netrc
+          git push https://git.heroku.com/${HEROKU_APP_NAME}.git HEAD:main
 
       - name: Verify deployment health
         run: |
