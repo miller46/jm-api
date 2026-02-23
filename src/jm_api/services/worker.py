@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import signal
-import sys
 import time
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 

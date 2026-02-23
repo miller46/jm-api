@@ -6,7 +6,7 @@ from enum import Enum as PyEnum
 from sqlalchemy import DateTime, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from jm_api.db.base import Base, TimestampedIdBase, utcnow
+from jm_api.db.base import TimestampedIdBase
 
 
 class TaskStatus(str, PyEnum):
