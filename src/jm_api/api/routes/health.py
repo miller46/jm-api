@@ -8,7 +8,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from starlette import status
 from starlette.responses import JSONResponse
 
-from jm_api.core.config import get_settings
 from jm_api.db.migrations import DatabaseMigrationError, assert_database_is_up_to_date
 
 router = APIRouter(tags=["health"])
