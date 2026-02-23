@@ -20,6 +20,7 @@ from jm_api.core.config import get_settings
 from jm_api.core.lifespan import lifespan
 from jm_api.core.logging import configure_logging
 from jm_api.core.observability import install_metrics, install_tracing
+from jm_api.middleware.graceful_shutdown import GracefulShutdownMiddleware
 from jm_api.middleware.request_id import RequestIdMiddleware
 from jm_api.middleware.security_headers import SecurityHeadersMiddleware
 
@@ -80,6 +81,9 @@ def create_app() -> FastAPI:
 
     install_tracing(app, settings)
     install_metrics(app, settings)
+
+    # Add graceful shutdown middleware first to catch requests during shutdown
+    app.add_middleware(GracefulShutdownMiddleware)
 
     # Add rate limiting
     app.state.limiter = limiter
