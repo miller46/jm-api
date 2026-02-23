@@ -1,0 +1,65 @@
+name: CD
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: production
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to Heroku
+        uses: akhileshns/heroku-deploy@v3.14.15
+        with:
+          heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
+          heroku_app_name: ${{ secrets.HEROKU_APP_NAME }}
+          heroku_email: ${{ secrets.HEROKU_EMAIL }}
+          branch: main
+
+      - name: Verify deployment health
+        run: |
+          echo "Waiting for deployment to stabilize..."
+          sleep 30
+          
+          # Get the Heroku app URL
+          APP_NAME="${{ secrets.HEROKU_APP_NAME }}"
+          HEALTH_URL="https://${APP_NAME}.herokuapp.com/api/v1/health"
+          
+          echo "Checking health endpoint: ${HEALTH_URL}"
+          
+          # Attempt health check with retries
+          for i in {1..5}; do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}" || echo "000")
+            if [ "${HTTP_STATUS}" = "200" ]; then
+              echo "✅ Health check passed (HTTP ${HTTP_STATUS})"
+              exit 0
+            fi
+            echo "Attempt ${i}/5: Health check returned HTTP ${HTTP_STATUS}, retrying in 10s..."
+            sleep 10
+          done
+          
+          echo "❌ Health check failed after 5 attempts"
+          exit 1
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "🚀 Deployment to Heroku completed successfully!"
+          else
+            echo "❌ Deployment to Heroku failed"
+          fi
