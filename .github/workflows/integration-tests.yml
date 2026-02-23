@@ -96,6 +96,22 @@ jobs:
 
     env:
       JM_API_JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+      JM_API_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      CI: true
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
 
     steps:
       - name: Checkout repository
@@ -132,7 +148,6 @@ jobs:
 
       - name: Validate Alembic migrations
         run: |
-          export JM_API_DATABASE_URL="sqlite:///./ci_migrations.db"
           if [ -f uv.lock ]; then
             uv run alembic upgrade head
             uv run alembic check
