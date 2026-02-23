@@ -526,6 +526,7 @@ dependencies = [
     { name = "email-validator" },
     { name = "fastapi" },
     { name = "gunicorn" },
+    { name = "httpx" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-jaeger-thrift" },
     { name = "opentelemetry-instrumentation-fastapi" },
@@ -544,7 +545,6 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "bandit" },
-    { name = "httpx" },
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "pytest" },
@@ -555,7 +555,6 @@ dev = [
 [package.dev-dependencies]
 dev = [
     { name = "bandit" },
-    { name = "httpx" },
     { name = "mypy" },
     { name = "pip-audit" },
     { name = "pytest" },
@@ -570,7 +569,7 @@ requires-dist = [
     { name = "email-validator", specifier = ">=2.3.0" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "gunicorn", specifier = ">=22.0" },
-    { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "opentelemetry-api", specifier = ">=1.27.0" },
     { name = "opentelemetry-exporter-jaeger-thrift", specifier = ">=1.21.0" },
@@ -595,7 +594,6 @@ provides-extras = ["dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "bandit", specifier = ">=1.8.6" },
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "mypy", specifier = ">=1.18.2" },
     { name = "pip-audit", specifier = ">=2.9.0" },
     { name = "pytest", specifier = ">=9.0.2" },
