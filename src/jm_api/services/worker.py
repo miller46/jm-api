@@ -197,3 +197,38 @@ def reset_stale_tasks(session: Session, stale_timeout_seconds: int = 300) -> int
         logger.info(f"Reset {reset_count} stale tasks to queued")
     
     return reset_count
+
+
+class TaskWorker:
+    """Worker class for running background tasks.
+    
+    Provides a class-based interface around the functional worker API
+    for use by CLI entry points and custom worker implementations.
+    """
+    
+    def __init__(self):
+        self.handlers: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]]] = {}
+    
+    def register_handler(self, task_type: str):
+        """Decorator to register a task handler.
+        
+        Args:
+            task_type: The type of task this handler processes
+            
+        Returns:
+            Decorator function that registers the handler
+        """
+        def decorator(func: Callable[[dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]]):
+            register_task_handler(task_type)(func)
+            self.handlers[task_type] = func
+            return func
+        return decorator
+    
+    def run(self, poll_interval: float = 5.0, max_tasks_per_iteration: int = 10) -> None:
+        """Run the worker loop forever.
+        
+        Args:
+            poll_interval: Seconds to wait between polling for new tasks
+            max_tasks_per_iteration: Maximum tasks to process per iteration
+        """
+        asyncio.run(run_worker_forever(poll_interval, max_tasks_per_iteration))
