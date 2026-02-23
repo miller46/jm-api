@@ -16,14 +16,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: production
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Deploy to Heroku
-        uses: akhileshns/heroku-deploy@v3.14.15
+        uses: akhileshns/heroku-deploy@v4.3.6
         with:
           heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
           heroku_app_name: ${{ secrets.HEROKU_APP_NAME }}
