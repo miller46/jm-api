@@ -128,7 +128,7 @@ class TestAdminBreakTrigger:
         assert response.status_code == 500
         body = response.json()
         assert body["status"] == "fail"
-        assert "artificial health check failure triggered" in body["error"]
+        assert body["error"] == "artificial_failure_enabled"
 
     def test_break_causes_ready_to_return_500(self, client: TestClient, admin_user_factory, monkeypatch) -> None:
         """Ready endpoint returns 500 when break is triggered."""
@@ -151,7 +151,7 @@ class TestAdminBreakTrigger:
         assert response.status_code == 500
         body = response.json()
         assert body["status"] == "fail"
-        assert "artificial health check failure triggered" in body["error"]
+        assert body["error"] == "artificial_failure_enabled"
 
     def test_break_causes_live_to_return_500(self, client: TestClient, admin_user_factory) -> None:
         """Live endpoint returns 500 when break is triggered."""
@@ -169,7 +169,7 @@ class TestAdminBreakTrigger:
         assert response.status_code == 500
         body = response.json()
         assert body["status"] == "fail"
-        assert "artificial health check failure triggered" in body["error"]
+        assert body["error"] == "artificial_failure_enabled"
 
     def test_break_causes_healthz_to_return_ok(self, client: TestClient, admin_user_factory) -> None:
         """Healthz (legacy) endpoint is NOT affected by break - remains OK."""

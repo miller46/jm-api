@@ -20,7 +20,7 @@ def liveness_check() -> dict[str, str]:
     if is_health_break_triggered():
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"status": "fail", "error": "artificial health check failure triggered"},
+            content={"status": "fail", "error": "artificial_failure_enabled"},
         )
     return {"status": "ok"}
 
@@ -31,7 +31,7 @@ def health_check(request: Request) -> JSONResponse:
     if is_health_break_triggered():
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"status": "fail", "error": "artificial health check failure triggered"},
+            content={"status": "fail", "error": "artificial_failure_enabled"},
         )
     payload, code = _build_deep_health_payload(request)
     return JSONResponse(status_code=code, content=payload)
@@ -43,7 +43,7 @@ def readiness_check(request: Request) -> JSONResponse:
     if is_health_break_triggered():
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            content={"status": "fail", "error": "artificial health check failure triggered"},
+            content={"status": "fail", "error": "artificial_failure_enabled"},
         )
     payload, code = _build_deep_health_payload(request)
     return JSONResponse(status_code=code, content=payload)
