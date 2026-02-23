@@ -14,18 +14,6 @@ from jm_api.db.migrations import DatabaseMigrationError, assert_database_is_up_t
 router = APIRouter(tags=["health"])
 
 
-@router.get("/meta")
-def deployment_metadata() -> JSONResponse:
-    """Return deployment metadata for verifying live code version."""
-    settings = get_settings()
-    payload = {
-        "git_sha": settings.git_sha,
-        "deployed_at": settings.deployed_at,
-        "environment": settings.environment,
-    }
-    return JSONResponse(status_code=status.HTTP_200_OK, content=payload)
-
-
 @router.get("/live")
 def liveness_check() -> dict[str, str]:
     """Basic liveness probe: process is up and serving requests."""

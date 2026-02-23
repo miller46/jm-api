@@ -111,6 +111,18 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
 
+    # Deployment metadata endpoint at /api/meta (outside v1 prefix)
+    @app.get("/api/meta", tags=["health"])
+    def deployment_metadata() -> dict[str, str | None]:
+        """Return deployment metadata for verifying live code version."""
+        s = get_settings()
+        return {
+            "version": s.app_version,
+            "git_sha": s.git_sha,
+            "deployed_at": s.deployed_at,
+            "environment": s.environment,
+        }
+
     app.mount("/admin", StaticFiles(directory=str(_STATIC_DIR)), name="admin")
 
     return app
