@@ -8,6 +8,7 @@ from jm_api.schemas.auth import (
     UserCreate,
     UserResponse,
 )
+from jm_api.schemas.task import TaskCreate, TaskResponse, TaskStatus
 
 __all__ = [
     "LoginRequest",
@@ -16,4 +17,7 @@ __all__ = [
     "TokenResponse",
     "UserCreate",
     "UserResponse",
+    "TaskCreate",
+    "TaskResponse",
+    "TaskStatus",
 ]

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class TaskStatus:
-    """Task status constants."""
-
+class TaskStatus(str, Enum):
+    """Task status values."""
     QUEUED = "queued"
     PROCESSING = "processing"
     COMPLETED = "completed"
@@ -15,35 +15,37 @@ class TaskStatus:
 
 
 class TaskCreate(BaseModel):
-    """Schema for creating a new task."""
+    """Schema for creating a new background task."""
+    type: str = Field(..., min_length=1, max_length=128)
+    payload: dict | None = None
 
-    type: str = Field(min_length=1, max_length=128)
-    payload: dict = Field(default_factory=dict)
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "type": "email.send",
+                "payload": {
+                    "to": "user@example.com",
+                    "subject": "Hello",
+                    "body": "Message content"
+                }
+            }
+        }
+    )
 
 
 class TaskResponse(BaseModel):
-    """Schema for task response."""
-
+    """Single task response schema."""
     id: str
     type: str
-    status: str
-    payload: dict
-    result: dict | None
-    error_message: str | None
-    attempts: int
-    max_attempts: int
-    create_at: datetime
-    started_at: datetime | None
-    completed_at: datetime | None
+    status: TaskStatus
+    payload: dict | None = None
+    result: dict | None = None
+    error: str | None = None
+    retry_count: int
+    created_at: datetime = Field(validation_alias="create_at", serialization_alias="created_at")
+    completed_at: datetime | None = None
 
-    model_config = ConfigDict(from_attributes=True)
-
-
-class TaskCreateResponse(BaseModel):
-    """Schema for task creation response."""
-
-    id: str
-    status: str
-    create_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(
+        from_attributes=True,
+        populate_by_name=True,
+    )

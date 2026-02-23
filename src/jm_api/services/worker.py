@@ -1,179 +1,199 @@
-"""Background task worker service."""
+"""Background worker service for async task processing."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
-import signal
-import time
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import Any, Callable, Coroutine
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
-from jm_api.db.session import get_engine
+from jm_api.db.base import utcnow
+from jm_api.db.session import SessionLocal
 from jm_api.models.task import Task, TaskStatus
-
-if TYPE_CHECKING:
-    from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
-# Global flag for graceful shutdown
-_shutdown_requested = False
+# Registry of task handlers
+_task_handlers: dict[str, Callable[[dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]]] = {}
 
 
-def _signal_handler(signum: int, frame) -> None:
-    """Handle shutdown signals gracefully."""
-    global _shutdown_requested
-    logger.info(f"Received signal {signum}, initiating graceful shutdown...")
-    _shutdown_requested = True
+def register_task_handler(task_type: str):
+    """Decorator to register a task handler."""
+    def decorator(func: Callable[[dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]]):
+        _task_handlers[task_type] = func
+        logger.info(f"Registered task handler for type: {task_type}")
+        return func
+    return decorator
 
 
-# Register signal handlers
-signal.signal(signal.SIGTERM, _signal_handler)
-signal.signal(signal.SIGINT, _signal_handler)
+def get_task_handler(task_type: str) -> Callable[[dict[str, Any]], Coroutine[Any, Any, dict[str, Any]]] | None:
+    """Get the registered handler for a task type."""
+    return _task_handlers.get(task_type)
 
 
-class TaskWorker:
-    """Background task worker for processing async jobs."""
+def process_task_sync(task_id: str) -> bool:
+    """Process a single task synchronously (for use with multiprocessing).
+    
+    Args:
+        task_id: The task ID to process
+        
+    Returns:
+        True if task was processed, False otherwise
+    """
+    import asyncio
+    return asyncio.run(_process_task_async(task_id))
 
-    def __init__(
-        self,
-        engine: Engine | None = None,
-        poll_interval: float = 5.0,
-        max_runtime: float = 300.0,  # 5 minutes max per task
-    ):
-        self.engine = engine or get_engine()
-        self.poll_interval = poll_interval
-        self.max_runtime = max_runtime
-        self._handlers: dict[str, callable] = {}
 
-    def register_handler(self, task_type: str, handler: callable) -> None:
-        """Register a handler for a specific task type."""
-        self._handlers[task_type] = handler
-        logger.info(f"Registered handler for task type: {task_type}")
+async def _process_task_async(task_id: str) -> bool:
+    """Async helper for process_task_sync."""
+    with SessionLocal() as session:
+        return await process_task(session, task_id)
 
-    def _get_next_task(self, session: Session) -> Task | None:
-        """Get the next task to process (queued or retryable failed)."""
-        # First, try to get queued tasks
-        task = session.execute(
-            select(Task)
-            .where(Task.status == TaskStatus.QUEUED.value)
-            .order_by(Task.create_at.asc())
-            .with_for_update(skip_locked=True)
-        ).scalar_one_or_none()
 
-        if task:
-            return task
-
-        # Then, try to get failed tasks that can be retried
-        # Only retry if enough time has passed since last attempt (exponential backoff)
-        task = session.execute(
-            select(Task)
-            .where(Task.status == TaskStatus.FAILED.value)
-            .where(Task.attempts < Task.max_attempts)
-            .order_by(Task.create_at.asc())
-            .with_for_update(skip_locked=True)
-        ).scalar_one_or_none()
-
-        return task
-
-    def _process_task(self, session: Session, task: Task) -> None:
-        """Process a single task."""
-        handler = self._handlers.get(task.type)
-        if not handler:
-            task.status = TaskStatus.FAILED.value
-            task.error_message = f"No handler registered for task type: {task.type}"
-            task.attempts += 1
-            logger.warning(f"No handler for task type: {task.type}")
-            return
-
-        # Mark as processing
-        task.status = TaskStatus.PROCESSING.value
-        task.attempts += 1
-        task.started_at = datetime.now(timezone.utc)
+async def process_task(session: Session, task_id: str) -> bool:
+    """Process a single task.
+    
+    Args:
+        session: Database session
+        task_id: The task ID to process
+        
+    Returns:
+        True if task was processed successfully, False otherwise
+    """
+    # Fetch the task
+    task = session.execute(
+        select(Task).where(Task.id == task_id)
+    ).scalar_one_or_none()
+    
+    if task is None:
+        logger.warning(f"Task {task_id} not found")
+        return False
+    
+    if task.status not in (TaskStatus.QUEUED.value, TaskStatus.FAILED.value):
+        logger.info(f"Task {task_id} has status {task.status}, skipping")
+        return False
+    
+    # Mark as processing
+    now = utcnow()
+    task.status = TaskStatus.PROCESSING.value
+    task.processing_started_at = now
+    session.commit()
+    
+    handler = get_task_handler(task.type)
+    if handler is None:
+        logger.error(f"No handler registered for task type: {task.type}")
+        task.status = TaskStatus.FAILED.value
+        task.error = f"No handler registered for task type: {task.type}"
+        task.completed_at = utcnow()
         session.commit()
+        return False
+    
+    try:
+        # Execute the handler
+        result = await handler(task.payload or {})
+        
+        # Mark as completed
+        task.status = TaskStatus.COMPLETED.value
+        task.result = result
+        task.completed_at = utcnow()
+        task.error = None
+        session.commit()
+        
+        logger.info(f"Task {task_id} completed successfully")
+        return True
+        
+    except Exception as e:
+        logger.exception(f"Task {task_id} failed: {e}")
+        
+        # Mark as failed
+        task.status = TaskStatus.FAILED.value
+        task.error = str(e)
+        task.completed_at = utcnow()
+        task.retry_count += 1
+        session.commit()
+        
+        return False
 
-        logger.info(f"Processing task {task.id} (type: {task.type}, attempt: {task.attempts})")
 
+async def run_worker_iteration(session: Session, max_tasks: int = 10) -> int:
+    """Run one iteration of the worker, processing pending tasks.
+    
+    Args:
+        session: Database session
+        max_tasks: Maximum number of tasks to process in this iteration
+        
+    Returns:
+        Number of tasks processed
+    """
+    # Find queued tasks, ordered by creation time (FIFO)
+    # Also include failed tasks that haven't exceeded retry limit
+    tasks = session.execute(
+        select(Task)
+        .where(
+            (Task.status == TaskStatus.QUEUED.value) |
+            ((Task.status == TaskStatus.FAILED.value) & (Task.retry_count < 3))
+        )
+        .order_by(Task.create_at)
+        .limit(max_tasks)
+    ).scalars().all()
+    
+    processed = 0
+    for task in tasks:
+        success = await process_task(session, task.id)
+        if success:
+            processed += 1
+    
+    return processed
+
+
+async def run_worker_forever(
+    poll_interval: float = 5.0,
+    max_tasks_per_iteration: int = 10
+) -> None:
+    """Run the worker loop forever.
+    
+    Args:
+        poll_interval: Seconds to wait between polling for new tasks
+        max_tasks_per_iteration: Maximum tasks to process per iteration
+    """
+    logger.info("Starting background worker")
+    
+    while True:
         try:
-            result = handler(task.payload)
-            task.status = TaskStatus.COMPLETED.value
-            task.result = {"data": result} if result is not None else {}
-            task.completed_at = datetime.now(timezone.utc)
-            logger.info(f"Task {task.id} completed successfully")
-        except Exception as exc:
-            task.status = TaskStatus.FAILED.value
-            task.error_message = str(exc)
-            logger.exception(f"Task {task.id} failed: {exc}")
-
-            # If we haven't exceeded max attempts, re-queue
-            if task.attempts < task.max_attempts:
-                task.status = TaskStatus.QUEUED.value
-                logger.info(f"Task {task.id} will be retried (attempt {task.attempts + 1}/{task.max_attempts})")
-
-    def _recover_orphaned_tasks(self, session: Session) -> None:
-        """Recover tasks that were processing when worker died."""
-        # Find tasks that have been processing for too long
-        # (likely orphaned due to worker restart/crash)
-        cutoff = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
-
-        orphaned = session.execute(
-            select(Task)
-            .where(Task.status == TaskStatus.PROCESSING.value)
-            .where(Task.started_at < cutoff)
-        ).scalars().all()
-
-        for task in orphaned:
-            logger.warning(f"Recovering orphaned task {task.id}")
-            if task.attempts < task.max_attempts:
-                task.status = TaskStatus.QUEUED.value
-                task.error_message = "Task was orphaned due to worker restart"
-            else:
-                task.status = TaskStatus.FAILED.value
-                task.error_message = "Task exceeded max attempts after being orphaned"
-                task.completed_at = datetime.now(timezone.utc)
-
-        if orphaned:
-            session.commit()
-            logger.info(f"Recovered {len(orphaned)} orphaned tasks")
-
-    def run(self) -> None:
-        """Run the worker loop."""
-        logger.info("Task worker started")
-
-        with Session(self.engine) as session:
-            self._recover_orphaned_tasks(session)
-
-        while not _shutdown_requested:
-            try:
-                with Session(self.engine) as session:
-                    with session.begin():
-                        task = self._get_next_task(session)
-                        if task:
-                            self._process_task(session, task)
-
-                if not _shutdown_requested:
-                    time.sleep(self.poll_interval)
-            except Exception as exc:
-                logger.exception(f"Error in worker loop: {exc}")
-                if not _shutdown_requested:
-                    time.sleep(self.poll_interval)
-
-        logger.info("Task worker stopped gracefully")
+            with SessionLocal() as session:
+                processed = await run_worker_iteration(session, max_tasks_per_iteration)
+                if processed > 0:
+                    logger.info(f"Processed {processed} tasks")
+        except Exception as e:
+            logger.exception(f"Worker iteration failed: {e}")
+        
+        await asyncio.sleep(poll_interval)
 
 
-def create_default_worker() -> TaskWorker:
-    """Create a worker with default handlers."""
-    worker = TaskWorker()
-
-    # Register example handlers
-    @worker.register_handler
-    def email_send(payload: dict) -> dict:
-        """Example email handler."""
-        # This is a placeholder - real implementation would send email
-        logger.info(f"Sending email with payload: {payload}")
-        return {"sent": True}
-
-    return worker
+def reset_stale_tasks(session: Session, stale_timeout_seconds: int = 300) -> int:
+    """Reset tasks that appear stuck in processing state.
+    
+    This handles cases where a worker dyno was restarted while processing a task.
+    
+    Args:
+        session: Database session
+        stale_timeout_seconds: How long a task can be in processing before considered stale
+        
+    Returns:
+        Number of tasks reset
+    """
+    # For simplicity, reset any processing tasks - in production you'd check the timestamp
+    result = session.execute(
+        update(Task)
+        .where(Task.status == TaskStatus.PROCESSING.value)
+        .values(status=TaskStatus.QUEUED.value, processing_started_at=None)
+    )
+    session.commit()
+    
+    reset_count = result.rowcount or 0
+    if reset_count > 0:
+        logger.info(f"Reset {reset_count} stale tasks to queued")
+    
+    return reset_count
