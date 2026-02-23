@@ -12,7 +12,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jm_api.app import create_app
-from jm_api.core import shutdown
 from jm_api.core.shutdown import (
     _reset_state_for_tests,
     decrement_active_requests,
