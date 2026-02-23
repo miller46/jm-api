@@ -1,6 +1,7 @@
 # jm-api
 
 [![Integration Tests](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml/badge.svg?branch=main)](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml)
+[![Deploy to Heroku](https://github.com/miller46/jm-api/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/miller46/jm-api/actions/workflows/deploy.yml)
 
 FastAPI + SQLAlchemy backend with JWT auth, bot management endpoints, a small admin web UI, and built-in observability.
 
