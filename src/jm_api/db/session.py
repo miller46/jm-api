@@ -13,6 +13,25 @@ from jm_api.core.observability import instrument_sqlalchemy
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
+# Global session factory for use outside of request context (e.g., workers)
+_SessionLocal: sessionmaker | None = None
+
+
+def _get_session_maker() -> sessionmaker:
+    """Get or create the session maker."""
+    global _SessionLocal
+    if _SessionLocal is None:
+        settings = get_settings()
+        connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+        engine = create_engine(settings.database_url, connect_args=connect_args)
+        instrument_sqlalchemy(engine, settings)
+        _SessionLocal = sessionmaker(
+            autocommit=False,
+            autoflush=False,
+            bind=engine,
+        )
+    return _SessionLocal
+
 
 def init_db(app: FastAPI) -> None:
     """Initialize database engine and session factory at startup.
@@ -31,6 +50,10 @@ def init_db(app: FastAPI) -> None:
     )
     app.state.db_engine = engine
     app.state.db_session_factory = session_factory
+
+    # Also set global for non-request usage
+    global _SessionLocal
+    _SessionLocal = session_factory
 
 
 def close_db(app: FastAPI) -> None:
@@ -56,3 +79,13 @@ def get_db(request: Request) -> Generator[Session, None, None]:
         raise
     finally:
         session.close()
+
+
+# Provide a SessionLocal for non-request contexts (e.g., workers)
+def SessionLocal() -> Session:
+    """Create a new database session for use outside of request context.
+    
+    This is useful for background workers and CLI commands.
+    """
+    session_maker = _get_session_maker()
+    return session_maker()
