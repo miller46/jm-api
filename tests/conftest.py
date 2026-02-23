@@ -184,11 +184,31 @@ def user_factory(db_session: Session):
 
 
 @pytest.fixture
-def admin_headers(user_factory) -> dict[str, str]:
-    """Authorization header for an admin user."""
-    admin = user_factory(email="admin@example.com", is_admin=True)
-    token = create_access_token(admin.id)
-    return {"Authorization": f"Bearer {token}"}
+def admin_user_factory(db_session: Session):
+    """Factory fixture for creating admin users in tests."""
+    counter = 0
+
+    def _create_admin(
+        email: str | None = None,
+        password: str = "password123",
+        is_active: bool = True,
+    ) -> User:
+        nonlocal counter
+        if email is None:
+            email = f"admin{counter}@example.com"
+            counter += 1
+        user = User(
+            email=email,
+            password_hash=hash_password(password),
+            is_active=is_active,
+            is_admin=True,
+        )
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+        return user
+
+    return _create_admin
 
 
 @pytest.fixture
@@ -196,4 +216,12 @@ def user_headers(user_factory) -> dict[str, str]:
     """Authorization header for a non-admin user."""
     user = user_factory(email="member@example.com", is_admin=False)
     token = create_access_token(user.id)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def admin_headers(user_factory) -> dict[str, str]:
+    """Authorization header for an admin user."""
+    admin = user_factory(email="admin@example.com", is_admin=True)
+    token = create_access_token(admin.id)
     return {"Authorization": f"Bearer {token}"}
