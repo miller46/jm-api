@@ -35,22 +35,16 @@ class TestProcfile:
         assert "0.0.0.0" in content
 
 
-class TestRuntimeTxt:
-    """Verify runtime.txt specifies the correct Python version."""
+class TestPythonVersion:
+    """Verify .python-version specifies the correct Python version (uv standard)."""
 
-    def test_runtime_txt_exists(self):
-        assert (ROOT / "runtime.txt").is_file()
+    def test_python_version_file_exists(self):
+        assert (ROOT / ".python-version").is_file()
 
-    def test_runtime_txt_specifies_python(self):
-        content = (ROOT / "runtime.txt").read_text().strip()
-        assert content.startswith("python-")
-
-    def test_runtime_txt_specifies_python_3_11_plus(self):
+    def test_python_version_specifies_python_3_11_plus(self):
         """pyproject.toml requires >=3.11."""
-        content = (ROOT / "runtime.txt").read_text().strip()
-        # Extract version: "python-3.X.Y" -> "3.X.Y"
-        version_str = content.removeprefix("python-")
-        parts = version_str.split(".")
+        content = (ROOT / ".python-version").read_text().strip()
+        parts = content.split(".")
         major, minor = int(parts[0]), int(parts[1])
         assert major == 3
         assert minor >= 11
