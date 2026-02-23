@@ -97,3 +97,35 @@ services:
 5. Start API container(s).
 6. Verify `/api/v1/live`, `/api/v1/ready`, `/api/v1/health`.
 7. Smoke test auth + bot list endpoint.
+
+## 7) Deployment metadata
+
+The `/api/v1/meta` endpoint returns deployment metadata useful for debugging and verification:
+
+```json
+{
+  "git_sha": "abc1234",
+  "deployed_at": "2025-01-15T08:30:00Z",
+  "environment": "production"
+}
+```
+
+To populate these values, set the following environment variables during your CI/CD build:
+
+```bash
+# Example: GitHub Actions
+export JM_API_GIT_SHA="${GITHUB_SHA::7}"
+export JM_API_DEPLOYED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+```
+
+Or inject them directly into your container runtime:
+
+```bash
+docker run \
+  -e JM_API_GIT_SHA=$(git rev-parse --short HEAD) \
+  -e JM_API_DEPLOYED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ") \
+  -e JM_API_ENVIRONMENT=production \
+  ghcr.io/miller46/jm-api:${IMAGE_TAG}
+```
+
+These variables are optional; the endpoint will return `null` for unset values.

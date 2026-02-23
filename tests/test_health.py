@@ -79,6 +79,63 @@ def test_health_returns_503_when_migrations_behind(monkeypatch) -> None:
     assert "migrations pending" in body["checks"]["migrations"]["error"]
 
 
+def test_meta_returns_deployment_metadata(monkeypatch) -> None:
+    app = create_app()
+
+    monkeypatch.setattr(
+        "jm_api.app.get_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "app_version": "1.2.3",
+                "git_sha": "abc123def456",
+                "deployed_at": "2026-02-23T12:00:00Z",
+                "environment": "staging",
+            },
+        )(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/meta")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/json"
+    body = response.json()
+    assert body["version"] == "1.2.3"
+    assert body["git_sha"] == "abc123def456"
+    assert body["deployed_at"] == "2026-02-23T12:00:00Z"
+    assert body["environment"] == "staging"
+
+
+def test_meta_returns_null_when_not_configured(monkeypatch) -> None:
+    app = create_app()
+
+    monkeypatch.setattr(
+        "jm_api.app.get_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {
+                "app_version": "0.1.0",
+                "git_sha": None,
+                "deployed_at": None,
+                "environment": "development",
+            },
+        )(),
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/meta")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["version"] == "0.1.0"
+    assert body["git_sha"] is None
+    assert body["deployed_at"] is None
+    assert body["environment"] == "development"
+
+
 def test_ready_returns_503_when_db_connectivity_fails() -> None:
     app = create_app()
 

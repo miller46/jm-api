@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     metrics_enabled: bool = Field(default=True)
     metrics_path: str = Field(default="/metrics")
 
+    # Deployment metadata
+    git_sha: str | None = Field(default=None)
+    deployed_at: str | None = Field(default=None)
+
     # JWT Settings
     jwt_secret_key: str = Field(default=_DEFAULT_JWT_SECRET)
     jwt_signing_keys: list[str] = Field(default_factory=list)
