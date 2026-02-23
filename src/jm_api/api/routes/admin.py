@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from starlette.responses import JSONResponse
+from fastapi import APIRouter, Depends, Request
 
 from jm_api.api.deps import require_admin
-from jm_api.core.config import get_settings
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 logger = structlog.get_logger(__name__)

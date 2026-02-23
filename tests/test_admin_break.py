@@ -14,7 +14,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jm_api.api.routes.admin import set_health_break_triggered
-from jm_api.app import create_app
 
 
 # ===================================================================
