@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 import time
 
 import jwt
@@ -571,6 +572,47 @@ class TestSecurityHardening:
 
         auth_deps._LAST_SESSION_CLEANUP_AT = None
         auth_deps._maybe_cleanup_expired_sessions(FailingSession())
+
+    def test_cleanup_keeps_recently_expired_sessions_for_grace_period(
+        self,
+        db_session: Session,
+        test_user: User,
+    ) -> None:
+        """Cleanup should retain sessions until 7 days past expiry."""
+        now = auth_deps._utcnow()
+
+        db_session.add_all(
+            [
+                SessionToken(
+                    token_jti="expired-beyond-grace",
+                    user_id=test_user.id,
+                    issued_at=now - timedelta(days=30),
+                    expires_at=now - timedelta(days=8),
+                    revoked_at=None,
+                    rotated_from_jti=None,
+                    user_agent_hash=None,
+                    ip_subnet=None,
+                ),
+                SessionToken(
+                    token_jti="expired-within-grace",
+                    user_id=test_user.id,
+                    issued_at=now - timedelta(days=10),
+                    expires_at=now - timedelta(days=6),
+                    revoked_at=None,
+                    rotated_from_jti=None,
+                    user_agent_hash=None,
+                    ip_subnet=None,
+                ),
+            ]
+        )
+        db_session.commit()
+
+        deleted = auth_deps.cleanup_expired_sessions(db_session)
+        assert deleted == 1
+
+        remaining = db_session.execute(select(SessionToken.token_jti)).scalars().all()
+        assert "expired-within-grace" in remaining
+        assert "expired-beyond-grace" not in remaining
 
     def test_persist_refresh_token_jti_collision_returns_400(
         self,

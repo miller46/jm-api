@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+
+import structlog
 from enum import Enum
 from hashlib import sha256
 from ipaddress import ip_address
@@ -24,6 +26,7 @@ from jm_api.models.user import User
 from jm_api.schemas.auth import TokenPayload
 
 security = HTTPBearer(auto_error=False)
+logger = structlog.get_logger(__name__)
 
 _LAST_SESSION_CLEANUP_AT: datetime | None = None
 
@@ -81,6 +84,24 @@ def ip_to_subnet(ip: str | None) -> str | None:
     return ":".join(hextets[:4]) + "::/64"
 
 
+def cleanup_expired_sessions(db: Session) -> int:
+    """Delete refresh-session rows expired beyond the configured grace period."""
+    settings = get_settings()
+    cutoff = _utcnow() - timedelta(days=settings.session_cleanup_grace_days)
+
+    result = db.execute(delete(SessionToken).where(SessionToken.expires_at < cutoff))
+    db.commit()
+
+    deleted = int(result.rowcount or 0)
+    logger.info(
+        "auth.session_cleanup.completed",
+        deleted_count=deleted,
+        cutoff=cutoff.isoformat(),
+        grace_days=settings.session_cleanup_grace_days,
+    )
+    return deleted
+
+
 def _maybe_cleanup_expired_sessions(db: Session) -> None:
     """Opportunistically cleanup expired session rows at a bounded interval."""
     global _LAST_SESSION_CLEANUP_AT
@@ -93,8 +114,7 @@ def _maybe_cleanup_expired_sessions(db: Session) -> None:
             return
 
     try:
-        db.execute(delete(SessionToken).where(SessionToken.expires_at <= now))
-        db.commit()
+        cleanup_expired_sessions(db)
         _LAST_SESSION_CLEANUP_AT = now
     except Exception:
         db.rollback()
