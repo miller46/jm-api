@@ -17,21 +17,35 @@ if TYPE_CHECKING:
 _SessionLocal: sessionmaker | None = None
 
 
+def _build_engine_kwargs(database_url: str) -> dict:
+    """Build SQLAlchemy engine kwargs with DB-specific connection options."""
+    is_sqlite = database_url.startswith("sqlite")
+    connect_args: dict[str, str | bool] = (
+        {"check_same_thread": False}
+        if is_sqlite
+        else {
+            # 30s timeout prevents runaway PostgreSQL queries from holding
+            # a pooled connection indefinitely.
+            "options": "-c statement_timeout=30000",
+        }
+    )
+    engine_kwargs: dict = {"connect_args": connect_args}
+    if not is_sqlite:
+        engine_kwargs.update(
+            pool_size=10,
+            max_overflow=20,
+            pool_pre_ping=True,
+            pool_recycle=300,
+        )
+    return engine_kwargs
+
+
 def _get_session_maker() -> sessionmaker:
     """Get or create the session maker."""
     global _SessionLocal
     if _SessionLocal is None:
         settings = get_settings()
-        is_sqlite = settings.database_url.startswith("sqlite")
-        connect_args = {"check_same_thread": False} if is_sqlite else {}
-        engine_kwargs: dict = {"connect_args": connect_args}
-        if not is_sqlite:
-            engine_kwargs.update(
-                pool_size=10,
-                max_overflow=20,
-                pool_pre_ping=True,
-                pool_recycle=300,
-            )
+        engine_kwargs = _build_engine_kwargs(settings.database_url)
         engine = create_engine(settings.database_url, **engine_kwargs)
         instrument_sqlalchemy(engine, settings)
         _SessionLocal = sessionmaker(
@@ -49,16 +63,7 @@ def init_db(app: FastAPI) -> None:
     Should be called during FastAPI lifespan startup.
     """
     settings = get_settings()
-    is_sqlite = settings.database_url.startswith("sqlite")
-    connect_args = {"check_same_thread": False} if is_sqlite else {}
-    engine_kwargs: dict = {"connect_args": connect_args}
-    if not is_sqlite:
-        engine_kwargs.update(
-            pool_size=10,
-            max_overflow=20,
-            pool_pre_ping=True,
-            pool_recycle=300,
-        )
+    engine_kwargs = _build_engine_kwargs(settings.database_url)
     engine = create_engine(settings.database_url, **engine_kwargs)
     instrument_sqlalchemy(engine, settings)
     session_factory = sessionmaker(
