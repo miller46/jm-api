@@ -16,7 +16,6 @@ def test_bot_id_generated_and_format(db_session: Session) -> None:
     db_session.commit()
     db_session.refresh(bot)
 
-    assert isinstance(bot.id, str)
     assert len(bot.id) == 32
     assert re.fullmatch(r"[a-z0-9]{32}", bot.id)
 
@@ -30,8 +29,6 @@ def test_bot_timestamps_create_and_update(db_session: Session) -> None:
     db_session.refresh(bot)
     after_create = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    assert isinstance(bot.create_at, datetime)
-    assert isinstance(bot.last_update_at, datetime)
     # SQLite doesn't preserve timezone, so we verify timestamps are reasonable
     assert before_create <= bot.create_at <= after_create
     assert before_create <= bot.last_update_at <= after_create

@@ -152,47 +152,7 @@ class TestDatabaseUrlConfig:
 
 
 class TestProductionSecurityInvariants:
-    """Production/staging fail-fast invariant checks."""
-
-    def test_rate_limit_storage_memory_not_allowed_in_production(self) -> None:
-        with pytest.raises(ValueError, match="JM_API_RATE_LIMIT_STORAGE_URI cannot be memory://"):
-            Settings(
-                environment="production",
-                database_url="postgresql://user:pass@localhost/proddb",
-                jwt_secret_key="x" * 32,
-                rate_limit_storage_uri="memory://",
-            )
-
-    def test_bots_write_admin_only_required_in_production(self) -> None:
-        with pytest.raises(ValueError, match="JM_API_BOTS_WRITE_ADMIN_ONLY must be true"):
-            Settings(
-                environment="production",
-                database_url="postgresql://user:pass@localhost/proddb",
-                jwt_secret_key="x" * 32,
-                rate_limit_storage_uri="redis://localhost:6379/0",
-                bots_write_admin_only=False,
-            )
-
-    def test_bots_write_admin_only_allows_explicit_risk_acknowledgement(self) -> None:
-        settings = Settings(
-            environment="production",
-            database_url="postgresql://user:pass@localhost/proddb",
-            jwt_secret_key="x" * 32,
-            rate_limit_storage_uri="redis://localhost:6379/0",
-            bots_write_admin_only=False,
-            i_understand_risk=True,
-        )
-        assert settings.i_understand_risk is True
-
-    def test_trust_proxy_headers_requires_trusted_proxy_cidrs(self) -> None:
-        with pytest.raises(ValueError, match="JM_API_TRUST_PROXY_HEADERS=true requires"):
-            Settings(
-                environment="production",
-                database_url="postgresql://user:pass@localhost/proddb",
-                jwt_secret_key="x" * 32,
-                rate_limit_storage_uri="redis://localhost:6379/0",
-                trust_proxy_headers=True,
-            )
+    """Production/staging fail-fast invariant checks not already covered above."""
 
     def test_invalid_trusted_proxy_cidrs_rejected(self) -> None:
         with pytest.raises(ValueError, match="Invalid proxy CIDR"):
@@ -200,15 +160,6 @@ class TestProductionSecurityInvariants:
                 environment="development",
                 database_url="sqlite:///:memory:",
                 trusted_proxy_cidrs=["not-a-cidr"],
-            )
-
-    def test_jwt_secret_must_be_32_bytes_in_production(self) -> None:
-        with pytest.raises(ValueError, match="JM_API_JWT_SECRET_KEY must be at least 32 bytes"):
-            Settings(
-                environment="production",
-                database_url="postgresql://user:pass@localhost/proddb",
-                jwt_secret_key="short-secret",
-                rate_limit_storage_uri="redis://localhost:6379/0",
             )
 
     def test_jwt_signing_keys_must_be_32_bytes_in_production(self) -> None:
@@ -220,17 +171,6 @@ class TestProductionSecurityInvariants:
                 jwt_signing_keys=["x" * 32, "too-short"],
                 rate_limit_storage_uri="redis://localhost:6379/0",
             )
-
-    def test_non_production_can_use_convenience_defaults(self) -> None:
-        settings = Settings(
-            environment="development",
-            database_url="sqlite:///:memory:",
-            jwt_secret_key="short",
-            rate_limit_storage_uri="memory://",
-            bots_write_admin_only=False,
-            trust_proxy_headers=True,
-        )
-        assert settings.environment == "development"
 
 
 class TestEnvironmentDefaults:
