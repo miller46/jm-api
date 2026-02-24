@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
 
+from jm_api.api.deps import cleanup_expired_sessions
 from jm_api.core.config import get_settings
 from jm_api.core.redis_client import close_redis, init_redis
 from jm_api.core.shutdown import (
@@ -16,6 +18,18 @@ from jm_api.db.migrations import assert_database_is_up_to_date
 from jm_api.db.session import init_db
 
 logger = structlog.get_logger(__name__)
+
+
+async def _session_cleanup_loop(app: FastAPI) -> None:
+    settings = get_settings()
+    while True:
+        try:
+            with app.state.db_session_factory() as db:
+                cleanup_expired_sessions(db)
+        except Exception as exc:
+            logger.warning("auth.session_cleanup.failed", error=str(exc))
+
+        await asyncio.sleep(settings.session_cleanup_interval_seconds)
 
 
 @asynccontextmanager
@@ -46,9 +60,17 @@ async def lifespan(app: FastAPI):
         # If Redis is required for production, the app should fail fast
         # This allows development without Redis while still supporting it
 
+    session_cleanup_task = asyncio.create_task(_session_cleanup_loop(app))
+
     logger.info("application.ready")
 
     yield
+
+    session_cleanup_task.cancel()
+    try:
+        await session_cleanup_task
+    except asyncio.CancelledError:
+        pass
 
     # Shutdown - graceful shutdown with connection draining
     logger.info("application.shutting_down")
