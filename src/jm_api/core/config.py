@@ -85,6 +85,18 @@ class Settings(BaseSettings):
     rate_limit_quota_per_day: int = Field(default=10000)
     rate_limit_quota_per_month: int = Field(default=200000)
 
+    # Redis configuration (Heroku environment variables)
+    redis_url: str | None = Field(default=None)
+    redis_port: int = Field(default=6379)
+    redis_password: str | None = Field(default=None)
+    redis_db: int = Field(default=0)
+    redis_connection_pool_size: int = Field(default=10)
+    redis_connection_pool_max: int = Field(default=20)
+    redis_socket_timeout: int = Field(default=5)
+    redis_socket_connect_timeout: int = Field(default=5)
+    redis_retry_on_timeout: bool = Field(default=True)
+    redis_health_check_interval: int = Field(default=30)
+
     model_config = SettingsConfigDict(
         env_prefix="JM_API_",
         env_file=".env",

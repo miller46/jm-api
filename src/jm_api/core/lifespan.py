@@ -6,6 +6,7 @@ import structlog
 from fastapi import FastAPI
 
 from jm_api.core.config import get_settings
+from jm_api.core.redis_client import close_redis, init_redis
 from jm_api.core.shutdown import (
     dispose_database_connections,
     drain_connections,
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     Handles startup initialization and graceful shutdown:
     - Registers signal handlers for SIGTERM/SIGINT
     - Initializes database connections
+    - Initializes Redis connection (if configured)
     - Performs graceful shutdown with connection draining on exit
     """
     # Startup
@@ -35,6 +37,15 @@ async def lifespan(app: FastAPI):
     if settings.db_migration_check_enabled:
         assert_database_is_up_to_date(app.state.db_engine)
 
+    # Initialize Redis (if configured)
+    try:
+        init_redis(app)
+    except Exception as exc:
+        # Log but don't fail startup - Redis might be optional
+        logger.warning("redis.startup_failed", error=str(exc))
+        # If Redis is required for production, the app should fail fast
+        # This allows development without Redis while still supporting it
+
     logger.info("application.ready")
 
     yield
@@ -43,4 +54,5 @@ async def lifespan(app: FastAPI):
     logger.info("application.shutting_down")
     drain_connections()
     dispose_database_connections(app)
+    close_redis()
     logger.info("application.shutdown_complete")
