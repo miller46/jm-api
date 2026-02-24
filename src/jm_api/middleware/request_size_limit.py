@@ -35,22 +35,23 @@ class RequestSizeLimitMiddleware:
 
         content_length = headers.get("content-length")
         if content_length is not None:
+            declared_size: int | None
             try:
                 declared_size = int(content_length)
             except ValueError:
                 declared_size = None
-            else:
-                if declared_size > self.max_body_bytes:
-                    logger.warning(
-                        "request.rejected.payload_too_large",
-                        method=method,
-                        path=path,
-                        content_length=declared_size,
-                        max_body_bytes=self.max_body_bytes,
-                    )
-                    response = JSONResponse(status_code=413, content={"detail": "Payload Too Large"})
-                    await response(scope, receive, send)
-                    return
+
+            if declared_size is not None and declared_size > self.max_body_bytes:
+                logger.warning(
+                    "request.rejected.payload_too_large",
+                    method=method,
+                    path=path,
+                    content_length=declared_size,
+                    max_body_bytes=self.max_body_bytes,
+                )
+                response = JSONResponse(status_code=413, content={"detail": "Payload Too Large"})
+                await response(scope, receive, send)
+                return
 
         bytes_seen = 0
 
