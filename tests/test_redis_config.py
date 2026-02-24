@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import redis
-from redis.connection import ConnectionPool
 
 from jm_api.core.config import Settings, get_settings
 from jm_api.core.redis_client import (
@@ -149,8 +148,6 @@ class TestInitRedis:
     @patch("jm_api.core.redis_client.get_settings")
     def test_init_redis_skipped_when_no_url(self, mock_get_settings, caplog):
         """Test that init_redis skips when URL not configured."""
-        from structlog.testing import CapturingLoggerFactory
-        
         settings = Settings(
             database_url="sqlite:///:memory:",
             jwt_secret_key="test-secret-key-32-bytes-long-for-testing",
