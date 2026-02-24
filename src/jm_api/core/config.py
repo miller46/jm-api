@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     redoc_url: str = Field(default="/redoc")
 
     request_id_header: str = Field(default="X-Request-ID")
+    max_request_body_bytes: int = Field(default=1_048_576)
 
     security_headers_enabled: bool = Field(default=True)
     security_header_x_content_type_options: str = Field(default="nosniff")
@@ -73,6 +74,7 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = Field(default=15)
     jwt_refresh_token_expire_days: int = Field(default=7)
     session_cleanup_interval_seconds: int = Field(default=300)
+    session_cleanup_grace_days: int = Field(default=7)
     trust_proxy_headers: bool = Field(default=False)
     trusted_proxy_cidrs: list[str] = Field(default_factory=list)
     bots_write_admin_only: bool = Field(default=False)
@@ -127,6 +129,13 @@ class Settings(BaseSettings):
     def validate_sample_rate(cls, value: float) -> float:
         if not 0 < value <= 1:
             raise ValueError("log_sample_rate must be > 0 and <= 1")
+        return value
+
+    @field_validator("max_request_body_bytes")
+    @classmethod
+    def validate_max_request_body_bytes(cls, value: int) -> int:
+        if value <= 0:
+            raise ValueError("max_request_body_bytes must be > 0")
         return value
 
     @field_validator("trusted_proxy_cidrs")

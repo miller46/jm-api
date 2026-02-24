@@ -22,6 +22,7 @@ from jm_api.core.logging import configure_logging
 from jm_api.core.observability import install_metrics, install_tracing
 from jm_api.middleware.graceful_shutdown import GracefulShutdownMiddleware
 from jm_api.middleware.request_id import RequestIdMiddleware
+from jm_api.middleware.request_size_limit import RequestSizeLimitMiddleware
 from jm_api.middleware.security_headers import SecurityHeadersMiddleware
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -84,6 +85,9 @@ def create_app() -> FastAPI:
 
     # Add graceful shutdown middleware first to catch requests during shutdown
     app.add_middleware(GracefulShutdownMiddleware)
+
+    # Enforce request body size limits to avoid oversized payload abuse.
+    app.add_middleware(RequestSizeLimitMiddleware, max_body_bytes=settings.max_request_body_bytes)
 
     # Add rate limiting
     app.state.limiter = limiter
