@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 from time import time
 
 import structlog
@@ -42,16 +41,36 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSO
     if "Retry-After" not in headers:
         headers["Retry-After"] = "60"
 
-    raw_detail = str(getattr(exc, "detail", ""))
-    match = re.search(r"(\d+)\s+per\s+(\d+)\s+(second|minute|hour|day|month)", raw_detail)
-    if match:
-        limit = match.group(1)
-        window = int(match.group(2))
-        unit = match.group(3)
-        seconds_per_unit = {"second": 1, "minute": 60, "hour": 3600, "day": 86400, "month": 2592000}
-        retry_after = str(window * seconds_per_unit[unit])
-        headers.setdefault("Retry-After", retry_after)
-        headers.setdefault("X-RateLimit-Limit", limit)
+    amount = getattr(exc, "amount", None)
+    per = getattr(exc, "per", None)
+    retry_after_seconds: int | None = None
+
+    if amount is None or per is None:
+        limit_wrapper = getattr(exc, "limit", None)
+        limit_item = getattr(limit_wrapper, "limit", None)
+        if limit_item is not None:
+            amount = amount if amount is not None else getattr(limit_item, "amount", None)
+            granularity = getattr(limit_item, "GRANULARITY", None)
+            per = per if per is not None else getattr(granularity, "name", None)
+            get_expiry = getattr(limit_item, "get_expiry", None)
+            if callable(get_expiry):
+                retry_after_seconds = int(get_expiry())
+
+    if amount is not None:
+        headers.setdefault("X-RateLimit-Limit", str(amount))
+
+    if retry_after_seconds is None and per is not None:
+        seconds_per_unit = {
+            "second": 1,
+            "minute": 60,
+            "hour": 3600,
+            "day": 86400,
+            "month": 2592000,
+        }
+        retry_after_seconds = seconds_per_unit.get(str(per).lower())
+
+    if retry_after_seconds is not None:
+        headers.setdefault("Retry-After", str(retry_after_seconds))
     headers.setdefault("X-RateLimit-Remaining", "0")
     headers.setdefault("X-RateLimit-Reset", str(int(time()) + int(headers["Retry-After"])))
 
