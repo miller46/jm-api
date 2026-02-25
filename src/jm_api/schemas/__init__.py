@@ -8,7 +8,7 @@ from jm_api.schemas.auth import (
     UserCreate,
     UserResponse,
 )
-from jm_api.schemas.errors import RateLimitError
+from jm_api.schemas.generic import RateLimitError
 from jm_api.schemas.task import TaskCreate, TaskResponse, TaskStatus
 
 __all__ = [

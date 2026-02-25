@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from ipaddress import ip_address
 from time import time
-from typing import Any
+from typing import Any, Protocol
 
 import structlog
 from fastapi import Request
@@ -15,7 +17,7 @@ from starlette.responses import JSONResponse
 
 from jm_api.api.deps import decode_token
 from jm_api.core.config import get_settings
-from jm_api.schemas.errors import RateLimitError
+from jm_api.schemas.generic import RateLimitError
 
 SECONDS_PER_UNIT = {
     "second": 1,
@@ -26,6 +28,17 @@ SECONDS_PER_UNIT = {
 }
 
 logger = structlog.get_logger(__name__)
+
+
+class _GranularityLike(Protocol):
+    name: str
+
+
+class _LimitItemLike(Protocol):
+    amount: int | None
+    GRANULARITY: _GranularityLike | None
+
+    def get_expiry(self) -> object: ...
 
 
 @dataclass(slots=True)
@@ -96,6 +109,35 @@ def _coerce_int(value: Any) -> int | None:
     return None
 
 
+def _extract_limit_item(exc: RateLimitExceeded) -> _LimitItemLike | None:
+    """Extract the nested SlowAPI limit item from exception objects."""
+    limit_wrapper = getattr(exc, "limit", None)
+    if limit_wrapper is None:
+        return None
+    return getattr(limit_wrapper, "limit", None)
+
+
+def _parse_retry_after_header(value: object) -> int | None:
+    """Parse Retry-After header as delta-seconds or HTTP-date."""
+    retry_after = _coerce_int(value)
+    if retry_after is not None:
+        return max(0, retry_after)
+
+    if not isinstance(value, str):
+        return None
+
+    try:
+        parsed = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+
+    delta = (parsed - datetime.now(timezone.utc)).total_seconds()
+    return max(0, int(delta))
+
+
 def _extract_limit_metadata(exc: RateLimitExceeded) -> LimitMetadata:
     """Extract metadata from different SlowAPI exception shapes."""
     amount = _coerce_int(getattr(exc, "amount", None))
@@ -105,9 +147,7 @@ def _extract_limit_metadata(exc: RateLimitExceeded) -> LimitMetadata:
     if amount is not None and per is not None:
         return LimitMetadata(amount=amount, per=str(per), retry_after_seconds=retry_after_seconds)
 
-    limit_wrapper = getattr(exc, "limit", None)
-    limit_item = getattr(limit_wrapper, "limit", None)
-
+    limit_item = _extract_limit_item(exc)
     if limit_item is None:
         return LimitMetadata(amount=amount, per=str(per) if per is not None else None)
 
@@ -115,7 +155,8 @@ def _extract_limit_metadata(exc: RateLimitExceeded) -> LimitMetadata:
         amount = _coerce_int(getattr(limit_item, "amount", None))
 
     if per is None:
-        granularity_name = getattr(getattr(limit_item, "GRANULARITY", None), "name", None)
+        granularity = getattr(limit_item, "GRANULARITY", None)
+        granularity_name = getattr(granularity, "name", None)
         per = str(granularity_name) if granularity_name is not None else None
 
     get_expiry = getattr(limit_item, "get_expiry", None)
@@ -135,7 +176,7 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSO
 
     retry_after_seconds = metadata.retry_after_seconds
     if retry_after_seconds is None:
-        retry_after_seconds = _coerce_int(headers.get("Retry-After"))
+        retry_after_seconds = _parse_retry_after_header(headers.get("Retry-After"))
 
     if retry_after_seconds is None and metadata.per is not None:
         retry_after_seconds = SECONDS_PER_UNIT.get(metadata.per.lower())
@@ -157,6 +198,7 @@ def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSO
         method=request.method,
         request_id=getattr(request.state, "request_id", None),
         limit=metadata.amount,
+        period=metadata.per,
         tier=tier,
         retry_after=retry_after_seconds,
     )
