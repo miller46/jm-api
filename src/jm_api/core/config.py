@@ -86,6 +86,7 @@ class Settings(BaseSettings):
     rate_limit_api_per_hour: int = Field(default=3000)
     rate_limit_quota_per_day: int = Field(default=10000)
     rate_limit_quota_per_month: int = Field(default=200000)
+    rate_limit_default_retry_after_seconds: int = Field(default=60)
 
     # Redis configuration (Heroku environment variables)
     redis_url: str | None = Field(default=None)

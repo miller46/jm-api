@@ -1,20 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
-from time import time
 
-import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse
 from starlette.staticfiles import StaticFiles
 
+from jm_api.api.rate_limit import limiter, rate_limit_exceeded_handler
 from jm_api.api.router import router as api_router
-from jm_api.api.routes import limiter
 from jm_api.core.config import get_settings
 from jm_api.core.lifespan import lifespan
 from jm_api.core.logging import configure_logging
@@ -25,60 +21,6 @@ from jm_api.middleware.request_size_limit import RequestSizeLimitMiddleware
 from jm_api.middleware.security_headers import SecurityHeadersMiddleware
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
-logger = structlog.get_logger(__name__)
-
-
-def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
-    """Handle rate limit exceeded errors."""
-    logger.warning(
-        "rate_limit.exceeded",
-        path=request.url.path,
-        method=request.method,
-        request_id=getattr(request.state, "request_id", None),
-    )
-
-    headers = dict(getattr(exc, "headers", {}) or {})
-    if "Retry-After" not in headers:
-        headers["Retry-After"] = "60"
-
-    amount = getattr(exc, "amount", None)
-    per = getattr(exc, "per", None)
-    retry_after_seconds: int | None = None
-
-    if amount is None or per is None:
-        limit_wrapper = getattr(exc, "limit", None)
-        limit_item = getattr(limit_wrapper, "limit", None)
-        if limit_item is not None:
-            amount = amount if amount is not None else getattr(limit_item, "amount", None)
-            granularity = getattr(limit_item, "GRANULARITY", None)
-            per = per if per is not None else getattr(granularity, "name", None)
-            get_expiry = getattr(limit_item, "get_expiry", None)
-            if callable(get_expiry):
-                retry_after_seconds = int(get_expiry())
-
-    if amount is not None:
-        headers.setdefault("X-RateLimit-Limit", str(amount))
-
-    if retry_after_seconds is None and per is not None:
-        seconds_per_unit = {
-            "second": 1,
-            "minute": 60,
-            "hour": 3600,
-            "day": 86400,
-            "month": 2592000,
-        }
-        retry_after_seconds = seconds_per_unit.get(str(per).lower())
-
-    if retry_after_seconds is not None:
-        headers.setdefault("Retry-After", str(retry_after_seconds))
-    headers.setdefault("X-RateLimit-Remaining", "0")
-    headers.setdefault("X-RateLimit-Reset", str(int(time()) + int(headers["Retry-After"])))
-
-    return JSONResponse(
-        status_code=429,
-        content={"detail": "Rate limit exceeded. Please try again later."},
-        headers=headers,
-    )
 
 
 def create_app() -> FastAPI:
