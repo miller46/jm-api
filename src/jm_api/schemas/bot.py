@@ -41,9 +41,3 @@ class BotListResponse(BaseModel):
     per_page: int
     pages: int
 
-
-class BotNotFoundError(BaseModel):
-    """Error response when bot is not found."""
-
-    message: str = "Bot not found"
-    id: str

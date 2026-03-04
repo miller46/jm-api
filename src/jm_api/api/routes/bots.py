@@ -11,7 +11,7 @@ from sqlalchemy.sql import Select
 
 from jm_api.db.session import get_db
 from jm_api.models.bot import Bot
-from jm_api.schemas.bot import BotListResponse, BotNotFoundError, BotResponse
+from jm_api.schemas.bot import BotListResponse, BotResponse
 
 router = APIRouter(prefix="/bots", tags=["bots"])
 
@@ -119,7 +119,6 @@ def list_bots(
 @router.get(
     "/{bot_id}",
     response_model=BotResponse,
-    responses={404: {"model": BotNotFoundError}},
 )
 def get_bot(
     bot_id: str = Path(pattern=r"^[a-zA-Z0-9]{32}$"),
