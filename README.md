@@ -268,6 +268,20 @@ All configuration is via environment variables with the `JM_API_` prefix. Unset 
 | `JM_API_APP_NAME` | `jm-api` | Application name (used in metrics labels) |
 | `JM_API_APP_VERSION` | `0.1.0` | Application version |
 
+### Database Pool
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_DB_POOL_MAX_CONNS` | `20` | Maximum PostgreSQL connections in pool |
+| `JM_API_DB_POOL_MIN_CONNS` | `2` | Minimum PostgreSQL connections maintained in pool |
+| `DB_POOL_MAX_CONNS` | `20` | Legacy alias for `JM_API_DB_POOL_MAX_CONNS` |
+| `DB_POOL_MIN_CONNS` | `2` | Legacy alias for `JM_API_DB_POOL_MIN_CONNS` |
+
+Recommended sizing:
+- Small (dev/test): max=10, min=2
+- Medium (production): max=20, min=5
+- Large (high-load): max=50, min=10
+
 ### Server
 
 | Variable | Default | Description |
