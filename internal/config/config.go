@@ -169,7 +169,7 @@ func Load() (*Config, error) {
 		RedisRetryOnTimeout:   envBool("JM_API_REDIS_RETRY_ON_TIMEOUT", true),
 		RedisHealthCheckInterval: envInt("JM_API_REDIS_HEALTH_CHECK_INTERVAL", 30),
 
-		ServerPort: envInt("JM_API_SERVER_PORT", 8000),
+		ServerPort: envInt("JM_API_SERVER_PORT", envInt("PORT", 8000)),
 		ServerHost: envOrDefault("JM_API_SERVER_HOST", "0.0.0.0"),
 
 		ShutdownTimeout: time.Duration(envInt("JM_API_SHUTDOWN_TIMEOUT", 30)) * time.Second,
