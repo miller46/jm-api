@@ -9,10 +9,6 @@
 # OS
 .DS_Store
 
-# Python (legacy)
-*.pyc
-__pycache__
-
 # Go
 bin/
 /api
@@ -21,12 +17,3 @@ bin/
 # Database
 *.db
 
-# Legacy
-/legacy/
-
-# Scratch files
-FIX_PLAN.md
-parity-plan.md
-go-api-features.txt
-legacy-features.txt
-prompt.txt

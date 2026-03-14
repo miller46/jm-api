@@ -1,6 +1,6 @@
-# jm-api-go
+# jm-api
 
-A Go REST API migrated from Python FastAPI, maintaining full feature parity. Built on chi v5 with PostgreSQL (sqlc + pgx v5), JWT authentication with session rotation, outbound webhook delivery, and a background task worker.
+A Go REST API built on chi v5 with PostgreSQL (sqlc + pgx v5), JWT authentication with session rotation, outbound webhook delivery, and a background task worker.
 
 ## Stack
 
@@ -66,22 +66,14 @@ make build
 ## Docker
 
 ```sh
-docker build -t jm-api-go .
-docker run -e JM_API_DATABASE_URL="..." -p 8000:8000 jm-api-go
+docker build -t jm-api .
+docker run -e JM_API_DATABASE_URL="..." -p 8000:8000 jm-api
 ```
 
 The image builds both `api` and `worker` binaries. The default `CMD` runs `api`. To run the worker instead:
 
-<<<<<<< Updated upstream
-```bash
-gunicorn jm_api.main:app \
-  --worker-class uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:${PORT:-8000} \
-  --workers ${WEB_CONCURRENCY:-4}
-=======
 ```sh
-docker run -e JM_API_DATABASE_URL="..." jm-api-go worker
->>>>>>> Stashed changes
+docker run -e JM_API_DATABASE_URL="..." jm-api worker
 ```
 
 ## Testing
@@ -454,5 +446,4 @@ internal/
   service/    — Auth (JWT/bcrypt/sessions), webhook delivery, worker
   server/     — chi router assembly, dependency wiring, lifecycle management
 static/       — Embedded admin dashboard assets
-legacy/       — Original Python FastAPI source (reference only)
 ```
