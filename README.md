@@ -389,6 +389,127 @@ The server enforces these additional validations when `JM_API_ENVIRONMENT` is `p
 - If `JM_API_TRUST_PROXY_HEADERS=true`, `JM_API_TRUSTED_PROXY_CIDRS` must be set
 - SQLite is not allowed (PostgreSQL only)
 
+## CI/CD Pipeline
+
+Two GitHub Actions workflows automate testing and deployment.
+
+### CI (`.github/workflows/ci.yml`)
+
+Runs on every push to `main` and on pull requests targeting `main`.
+
+**Job 1: `quality-gates`** (10 min timeout)
+1. Checkout → Go setup (version from `go.mod`) → module cache
+2. `go vet ./...`
+3. Build `api` and `worker` binaries
+4. Unit tests with race detection: `go test ./... -count=1 -race`
+
+**Job 2: `integration-tests`** (15 min timeout, depends on `quality-gates`)
+1. Starts a PostgreSQL 15 service container
+2. Installs `golang-migrate` CLI v4.17.0
+3. Runs all migrations against the test database
+4. Runs integration tests: `go test ./... -count=1 -race -v -tags integration`
+5. Uploads test output as a build artifact
+
+### CD (`.github/workflows/deploy.yml`)
+
+Runs on pushes to `main` only. Uses concurrency control — only one deploy runs at a time; new pushes cancel in-progress deploys.
+
+1. Checkout with full history (`fetch-depth: 0`)
+2. Configure `.netrc` for Heroku Git authentication
+3. `git push` to Heroku (`https://git.heroku.com/<app>.git HEAD:main`)
+4. Wait 30s for stabilization, then poll `/api/v1/health` up to 5 times (10s apart)
+5. Report deployment status
+
+### Required Secrets & Variables
+
+| Name | Type | Used By | Description |
+|------|------|---------|-------------|
+| `JWT_SECRET_KEY` | Secret | CI | JWT signing key for integration tests |
+| `HEROKU_API_KEY` | Secret | CD | Heroku API key for Git push auth |
+| `HEROKU_APP_NAME` | Secret | CD | Target Heroku app name |
+| `PRODUCTION_BASE_URL` | Variable | CD | Base URL for post-deploy health checks (e.g. `https://myapp.herokuapp.com`) |
+
+## Deployment
+
+### Heroku (Production)
+
+The app deploys to Heroku automatically on every push to `main` via the CD workflow. Heroku detects the `Dockerfile` and builds the container.
+
+**Initial setup:**
+
+1. Create a Heroku app and attach a PostgreSQL add-on
+2. Set config vars on Heroku:
+   ```sh
+   heroku config:set JM_API_DATABASE_URL="<postgres-url>" \
+     JM_API_ENVIRONMENT=production \
+     JM_API_JWT_SECRET_KEY="<min-32-byte-secret>" \
+     JM_API_REDIS_URL="<redis-url>" \
+     JM_API_BOTS_WRITE_ADMIN_ONLY=true \
+     -a <app-name>
+   ```
+3. Add the required GitHub secrets (`HEROKU_API_KEY`, `HEROKU_APP_NAME`) and the `PRODUCTION_BASE_URL` variable in repo settings
+
+**Running migrations in production:**
+
+Migrations are bundled in the Docker image at `/migrations`. Run them manually via Heroku:
+
+```sh
+heroku run "migrate -path /migrations -database \$DATABASE_URL up" -a <app-name>
+```
+
+**Running the worker:**
+
+The worker runs as a separate process. On Heroku, add a `worker` dyno type in your `Procfile` or scale it manually:
+
+```sh
+heroku ps:scale worker=1 -a <app-name>
+```
+
+### Docker (Self-Hosted)
+
+Build and run the container directly:
+
+```sh
+docker build -t jm-api .
+
+# Run the API
+docker run -d --name jm-api \
+  -e JM_API_DATABASE_URL="postgres://user:pass@host:5432/db" \
+  -e JM_API_ENVIRONMENT=production \
+  -e JM_API_JWT_SECRET_KEY="your-secret-key-min-32-bytes" \
+  -p 8000:8000 \
+  jm-api
+
+# Run the worker
+docker run -d --name jm-worker \
+  -e JM_API_DATABASE_URL="postgres://user:pass@host:5432/db" \
+  jm-api worker
+```
+
+The image includes a built-in health check that polls `/api/v1/live` every 30s.
+
+### Observability Stack (Local)
+
+A Docker Compose file provides Prometheus, Grafana, and Jaeger for local development:
+
+```sh
+docker compose -f docker-compose.observability.yml up -d
+```
+
+| Service | URL | Notes |
+|---------|-----|-------|
+| Prometheus | `http://localhost:9090` | Scrapes `/metrics` from `host.docker.internal:8000` |
+| Grafana | `http://localhost:3000` | Default login: `admin` / `admin` |
+| Jaeger | `http://localhost:16686` | Trace viewer UI |
+
+To enable tracing in the API, set:
+
+```sh
+export JM_API_TRACING_ENABLED=true
+export JM_API_TRACING_JAEGER_HOST=localhost
+export JM_API_TRACING_JAEGER_PORT=6831
+```
+
 ## Database Migrations
 
 Migrations live in `internal/db/migrate/`. The `golang-migrate` CLI is used to apply them.
