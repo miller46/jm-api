@@ -1,425 +1,458 @@
-# jm-api
+# jm-api-go
 
-[![Integration Tests](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml/badge.svg?branch=main)](https://github.com/miller46/jm-api/actions/workflows/integration-tests.yml)
-[![Deploy to Heroku](https://github.com/miller46/jm-api/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/miller46/jm-api/actions/workflows/deploy.yml)
+A Go REST API migrated from Python FastAPI, maintaining full feature parity. Built on chi v5 with PostgreSQL (sqlc + pgx v5), JWT authentication with session rotation, outbound webhook delivery, and a background task worker.
 
-FastAPI + SQLAlchemy backend with JWT auth, bot management endpoints, a small admin web UI, and built-in observability.
+## Stack
 
-## What this project includes
+| Component | Library |
+|-----------|---------|
+| Router | [chi v5](https://github.com/go-chi/chi) |
+| Database driver | [pgx v5](https://github.com/jackc/pgx) |
+| Query generation | [sqlc](https://sqlc.dev) |
+| Migrations | [golang-migrate](https://github.com/golang-migrate/migrate) |
+| Auth | [golang-jwt/jwt v5](https://github.com/golang-jwt/jwt) + bcrypt |
+| Rate limiting | In-memory (dev) / Redis (prod) |
+| Metrics | Prometheus |
+| Tracing | OpenTelemetry (OTLP/HTTP export) |
+| Logging | `log/slog` (structured JSON) |
 
-- Auth API: signup, login, refresh, logout, current user, and session management
-- Bot API: CRUD + pagination + filter support
-- Admin frontend served at `/admin`
-- Alembic migrations
-- Observability: structured logs, request IDs, Prometheus metrics, optional OpenTelemetry tracing
-- Safety defaults: SQLite allowed for local dev, rejected for `staging`/`production`
-- Bot write protection is secure by default (`JM_API_BOTS_WRITE_ADMIN_ONLY=true`)
+## Prerequisites
 
-## Project structure
+- Go 1.25+
+- PostgreSQL
+- [golang-migrate CLI](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate) (for running migrations manually)
+- Redis (optional in dev, required in production)
+- [sqlc](https://sqlc.dev) (only needed when modifying SQL queries)
 
-```text
-src/jm_api/
-  app.py                 # FastAPI app factory and middleware wiring
-  main.py                # ASGI entrypoint (jm_api.main:app)
-  api/
-    router.py            # top-level API router (/api/v1)
-    routes/
-      auth.py            # auth + session endpoints
-      bots.py            # bot CRUD endpoints
-      health.py          # health check endpoint
-    generic/             # reusable CRUD/filter helpers
-  core/
-    config.py            # JM_API_* settings
-    logging.py           # structured logging setup
-    observability.py     # metrics + tracing setup
-    lifespan.py          # startup/shutdown lifecycle
-  db/
-    session.py           # SQLAlchemy session dependency
-    migrations.py        # migration-state checks
-  models/                # SQLAlchemy models
-  schemas/               # pydantic request/response schemas
-  middleware/
-    request_id.py
-  static/                # admin frontend assets
-alembic/                 # DB migrations
-tests/
-  unit + API tests       # default pytest run
-  integration/           # full-stack integration tests
+## Getting Started
+
+### 1. Set environment variables
+
+At minimum you need a database URL:
+
+```sh
+export JM_API_DATABASE_URL="postgres://user:password@localhost:5432/jm_api?sslmode=disable"
 ```
 
-## Quickstart
+### 2. Run migrations
 
-### 1) Install dependencies
-
-```bash
-uv sync
+```sh
+make migrate-up
 ```
 
-### 2) Configure local environment
+### 3. Start the API server
 
-```bash
-export JM_API_DATABASE_URL="sqlite:///./dev.db"
-export JM_API_JWT_SECRET_KEY="dev-secret-change-me"
+```sh
+make run
 ```
 
-Optional but common for local work:
+The server starts on `0.0.0.0:8000` by default.
 
-```bash
-export JM_API_ENVIRONMENT=development
-export JM_API_DOCS_ENABLED=true
-export JM_API_API_V1_PREFIX=/api/v1
+### 4. Start the background worker (optional)
+
+In a separate terminal:
+
+```sh
+make worker
 ```
 
-### 3) Run database migrations
+## Build
 
-```bash
-make migrate
+```sh
+make build
+# outputs: bin/api, bin/worker
 ```
 
-### 4) Start the API
+## Docker
 
-```bash
-uv run uvicorn jm_api.main:app --reload
+```sh
+docker build -t jm-api-go .
+docker run -e JM_API_DATABASE_URL="..." -p 8000:8000 jm-api-go
 ```
 
-Production process model (Procfile):
+The image builds both `api` and `worker` binaries. The default `CMD` runs `api`. To run the worker instead:
 
+<<<<<<< Updated upstream
 ```bash
 gunicorn jm_api.main:app \
   --worker-class uvicorn.workers.UvicornWorker \
   --bind 0.0.0.0:${PORT:-8000} \
   --workers ${WEB_CONCURRENCY:-4}
+=======
+```sh
+docker run -e JM_API_DATABASE_URL="..." jm-api-go worker
+>>>>>>> Stashed changes
 ```
-
-Open:
-
-- Swagger docs: http://localhost:8000/docs
-- Admin UI: http://localhost:8000/admin
-- Liveness check: http://localhost:8000/api/v1/live
-- Readiness check: http://localhost:8000/api/v1/ready
-- Deep health check: http://localhost:8000/api/v1/health
-
-## Basic usage examples
-
-Base URL assumes `http://localhost:8000/api/v1`.
-
-### Signup
-
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/signup \
-  -H "Content-Type: application/json" \
-  -d '{"email":"dev@example.com","password":"secret123"}'
-```
-
-### Login
-
-```bash
-curl -i -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"dev@example.com","password":"secret123"}'
-```
-
-Notes:
-- Response contains `access_token`
-- Login also sets `refresh_token` and `csrf_token` cookies
-- Response header includes `X-CSRF-Token`
-
-### List bots
-
-```bash
-curl "http://localhost:8000/api/v1/bots?page=1&per_page=20"
-```
-
-### Create bot
-
-```bash
-curl -X POST http://localhost:8000/api/v1/bots \
-  -H "Content-Type: application/json" \
-  -d '{"rig_id":1,"name":"bot-a"}'
-```
-
-By default, writes are admin-only. To opt out:
-
-```bash
-export JM_API_BOTS_WRITE_ADMIN_ONLY=false
-```
-
-## Rate limiting and quotas
-
-The API enforces global throttling and identity-based quotas.
-
-- API-wide limits (per identity):
-  - `JM_API_RATE_LIMIT_API_PER_MINUTE` (default: `120`)
-  - `JM_API_RATE_LIMIT_API_PER_HOUR` (default: `3000`)
-- Per-identity quotas:
-  - `JM_API_RATE_LIMIT_QUOTA_PER_DAY` (default: `10000`)
-  - `JM_API_RATE_LIMIT_QUOTA_PER_MONTH` (default: `200000`)
-- Storage backend:
-  - `JM_API_RATE_LIMIT_STORAGE_URI` (default: `memory://`)
-  - Use Redis in multi-worker deployments, e.g. `redis://localhost:6379/0`
-
-Identity is determined as:
-- Authenticated requests: per user (`Authorization: Bearer ...`)
-- Anonymous requests: per client IP
-
-When limits are exceeded, API returns `429 Too Many Requests` with:
-- `Retry-After`
-- `X-RateLimit-Limit`
-- `X-RateLimit-Remaining`
-- `X-RateLimit-Reset`
-
-Login and signup also retain their stricter endpoint-specific protection (`5 per 15 minutes`).
-
-## URL map / routing
-
-Assuming local server at `http://localhost:8000` and default API prefix `/api/v1`:
-
-### Admin frontend
-
-- `GET /admin` — static admin app mount
-- `GET /admin/login.html` — admin login page
-- `GET /admin/signup.html` — admin signup page
-- `GET /admin/index.html` — admin dashboard
-
-### Core/health + docs
-
-- `GET /api/v1/live` — liveness probe (process is running)
-- `GET /api/v1/ready` — readiness probe (DB + migrations checks)
-- `GET /api/v1/health` — deep health check (DB connectivity + migration state)
-- `GET /api/v1/healthz` — legacy compatibility health endpoint
-- `GET /docs` — Swagger UI (when `JM_API_DOCS_ENABLED=true`)
-- `GET /redoc` — ReDoc (when docs enabled)
-- `GET /openapi.json` — OpenAPI schema (when docs enabled)
-
-### Auth endpoints
-
-- `POST /api/v1/auth/signup`
-- `POST /api/v1/auth/login`
-- `POST /api/v1/auth/refresh`
-- `POST /api/v1/auth/logout`
-- `GET /api/v1/auth/me`
-- `GET /api/v1/auth/sessions`
-- `DELETE /api/v1/auth/sessions/{session_jti}`
-- `POST /api/v1/auth/sessions/revoke-others`
-
-### Bot endpoints
-
-- `GET /api/v1/bots`
-- `POST /api/v1/bots` *(admin only by default; set `JM_API_BOTS_WRITE_ADMIN_ONLY=false` to opt out)*
-- `GET /api/v1/bots/{bot_id}`
-- `PUT /api/v1/bots/{bot_id}` *(admin only by default; set `JM_API_BOTS_WRITE_ADMIN_ONLY=false` to opt out)*
-- `DELETE /api/v1/bots/{bot_id}` *(admin only by default; set `JM_API_BOTS_WRITE_ADMIN_ONLY=false` to opt out)*
-
-`GET /api/v1/bots` supports:
-
-- `page`, `per_page`
-- `rig_id`
-- `kill_switch`
-- `log_search`
-- `create_at_after`, `create_at_before`
-- `last_update_at_after`, `last_update_at_before`
-- `last_run_at_after`, `last_run_at_before`
-
-### Metrics / observability endpoints
-
-- `GET /metrics` — Prometheus scrape endpoint (default)
-
-## Environment variables
-
-All settings use the `JM_API_` prefix.
-
-### Required
-
-- `JM_API_DATABASE_URL` (example: `sqlite:///./dev.db`)
-- `JM_API_JWT_SECRET_KEY` (set a non-default value)
-
-### Commonly used local settings
-
-- `JM_API_ENVIRONMENT=development`
-- `JM_API_DEBUG=false`
-- `JM_API_API_V1_PREFIX=/api/v1`
-- `JM_API_DOCS_ENABLED=true`
-- `JM_API_LOG_LEVEL=INFO`
-- `JM_API_LOG_JSON=true`
-- `JM_API_REQUEST_ID_HEADER=X-Request-ID`
-- `JM_API_ALLOW_ORIGINS=http://localhost:3000,http://localhost:8000`
-- `JM_API_ALLOWED_HOSTS=localhost,127.0.0.1`
-- `JM_API_BOTS_WRITE_ADMIN_ONLY=false` *(development default; required `true` in staging/production unless risk override is explicitly set)*
-- `JM_API_I_UNDERSTAND_RISK=false` *(escape hatch for temporary production exception when disabling admin-only bot writes)*
-- `JM_API_RATE_LIMIT_STORAGE_URI=memory://` *(development default; use Redis in staging/production)*
-- `JM_API_TRUST_PROXY_HEADERS=false`
-- `JM_API_TRUSTED_PROXY_CIDRS=` *(comma-separated, e.g. `10.0.0.0/8,172.16.0.0/12`)*
-
-### Production/staging startup invariants (fail-fast)
-
-When `JM_API_ENVIRONMENT` is `staging` or `production`, the app validates and refuses to start if any invariant is violated:
-
-- `JM_API_RATE_LIMIT_STORAGE_URI` **must not** be `memory://` (use Redis)
-- `JM_API_BOTS_WRITE_ADMIN_ONLY` must be `true`, unless `JM_API_I_UNDERSTAND_RISK=true` is explicitly set for a temporary exception
-- `JM_API_TRUST_PROXY_HEADERS=true` requires `JM_API_TRUSTED_PROXY_CIDRS` to be configured
-- JWT signing material must be at least 32 bytes per key (`JM_API_JWT_SECRET_KEY` or each key in `JM_API_JWT_SIGNING_KEYS`)
-
-In `development` and `test`, these checks are intentionally relaxed for local convenience.
-
-### Auth/JWT settings
-
-- `JM_API_JWT_ALGORITHM=HS256`
-- `JM_API_JWT_ACCESS_TOKEN_EXPIRE_MINUTES=15`
-- `JM_API_JWT_REFRESH_TOKEN_EXPIRE_DAYS=7`
-
-### Session store settings (refresh-token revocation)
-
-Refresh-token revocation is persisted in SQL via the `session_tokens` table.
-
-### Security hardening for internet exposure
-
-- **CSRF protection**: refresh/logout/session-management endpoints require `X-CSRF-Token` matching the `csrf_token` cookie (double-submit cookie pattern).
-- **Session binding**: refresh-token rotation is bound to a device fingerprint (`user-agent` hash) and source IP subnet (`/24` IPv4, `/64` IPv6).
-- **JWT secret rotation**: configure `JM_API_JWT_SIGNING_KEYS` as comma-separated keys. If set, only these keys are used (first signs new JWTs; all verify during rollover). `JM_API_JWT_SECRET_KEY` is used only when `JM_API_JWT_SIGNING_KEYS` is empty.
-- **Security audit logs**: auth actions emit structured `security.audit` events including `event_type`, `outcome`, `ip`, `user_agent`, and optional risk flags.
-
-### Production/staging startup invariants (fail-fast)
-
-When `JM_API_ENVIRONMENT` is `staging` or `production`, startup will fail unless all of the following are true:
-
-- `JM_API_RATE_LIMIT_STORAGE_URI` is **not** `memory://` (Redis required)
-- `JM_API_BOTS_WRITE_ADMIN_ONLY=true` *(or set `JM_API_I_UNDERSTAND_RISK=true` for an explicit temporary exception)*
-- if `JM_API_TRUST_PROXY_HEADERS=true`, then `JM_API_TRUSTED_PROXY_CIDRS` must be configured with valid CIDRs
-- Effective JWT signing key(s) must be at least 32 bytes (`JM_API_JWT_SECRET_KEY` or each entry in `JM_API_JWT_SIGNING_KEYS`)
-
-- `JM_API_SESSION_CLEANUP_INTERVAL_SECONDS=300` (opportunistic cleanup interval in API process)
-
-### Observability settings
-
-- `JM_API_METRICS_ENABLED=true`
-- `JM_API_METRICS_PATH=/metrics`
-- `JM_API_SLOW_QUERY_THRESHOLD_MS=500`
-- `JM_API_TRACING_ENABLED=false`
-- `JM_API_TRACING_SERVICE_NAME=jm-api`
-- `JM_API_TRACING_SERVICE_VERSION=0.1.0`
-- `JM_API_TRACING_JAEGER_HOST=localhost`
-- `JM_API_TRACING_JAEGER_PORT=6831`
-
-## Database migrations (Alembic)
-
-This project uses Alembic for schema migrations.
-
-### Commands
-
-```bash
-# Apply all migrations
-make migrate
-
-# Create a new migration from model changes
-make migrate-create msg="describe change"
-```
-
-You can also run Alembic directly:
-
-```bash
-uv run alembic upgrade head
-uv run alembic revision --autogenerate -m "describe change"
-```
-
-### Workflow
-
-1. Update SQLAlchemy models.
-2. Generate a migration (`make migrate-create ...`).
-3. Review/edit generated migration in `alembic/versions/`.
-4. Apply locally (`make migrate`).
-5. Run tests.
-
-### Bot table index strategy
-
-Migration `20260220_000002_add_bots_indexes` adds explicit indexes for the most common bot list/filter patterns:
-
-- Single-column: `rig_id`, `kill_switch`, `create_at`, `last_update_at`, `last_run_at`
-- Composite: `(rig_id, kill_switch)` and `(kill_switch, last_run_at)`
-
-> Note: this codebase uses `create_at`/`last_update_at` column names (not `created_at`/`last_updated_at`).
-
-To validate planner improvements in PostgreSQL, run:
-
-```sql
-EXPLAIN ANALYZE SELECT * FROM bots WHERE rig_id = 'rig-001';
-EXPLAIN ANALYZE SELECT * FROM bots WHERE kill_switch = false;
-EXPLAIN ANALYZE SELECT * FROM bots ORDER BY create_at DESC LIMIT 50;
-EXPLAIN ANALYZE SELECT * FROM bots WHERE kill_switch = false ORDER BY last_run_at DESC LIMIT 50;
-```
-
-### Startup migration gate
-
-On startup, the API verifies that the DB revision matches the Alembic head revision.
-If the DB is behind (or uninitialized), the app fails fast with an instruction to run migrations.
-
-You can disable this check in test/local scenarios:
-
-- `JM_API_DB_MIGRATION_CHECK_ENABLED=false`
-
-## CI pipeline
-
-GitHub Actions runs the `CI` workflow on pushes and pull requests to `main`.
-
-Order of checks:
-- `quality-gates` job (fast-fail):
-  - `ruff check .` (lint)
-  - `mypy` (type checks)
-  - `bandit -r src` (security scan)
-  - `pip-audit -r requirements.txt` (dependency vulnerability scan)
-- `integration-tests` job:
-  - runs only after `quality-gates` passes
-  - validates Alembic migrations and runs integration tests
-
-Because `integration-tests` depends on `quality-gates`, any failing lint/type/security/dependency check blocks merges on protected branches.
 
 ## Testing
 
-Run default tests (excludes integration marker):
-
-```bash
-uv run pytest
+```sh
+make test
+# or
+go test ./... -v -count=1
 ```
 
-Run integration tests explicitly:
+42 tests cover config, middleware, model, observability, and service packages. Handler tests are not included (require a live database).
 
-```bash
-uv run pytest -o addopts='' -m integration tests/integration
+## API Reference
+
+Base path: `/api/v1` (configurable via `JM_API_API_V1_PREFIX`)
+
+### Health
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/live` | None | Liveness probe |
+| GET | `/api/v1/health` | None | Health check with DB status |
+| GET | `/api/v1/ready` | None | Readiness probe (same as `/health`) |
+| GET | `/api/v1/healthz` | None | Simple liveness (Kubernetes style) |
+
+### Meta
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/meta` | None | Version, git SHA, environment info |
+
+### Auth
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/auth/signup` | None | Register a new user |
+| POST | `/api/v1/auth/login` | None | Login, returns access token + sets cookies |
+| POST | `/api/v1/auth/refresh` | Cookie + CSRF | Rotate refresh token, issue new access token |
+| POST | `/api/v1/auth/logout` | Bearer | Revoke current session |
+| GET | `/api/v1/auth/me` | Bearer | Get current user |
+| GET | `/api/v1/auth/sessions` | Bearer | List all sessions |
+| DELETE | `/api/v1/auth/sessions/{jti}` | Bearer | Revoke a specific session |
+| POST | `/api/v1/auth/sessions/revoke-others` | Bearer | Revoke all sessions except current |
+
+**Login rate limit:** 5 requests/minute. **Signup rate limit:** 5 requests/minute.
+
+Login response:
+```json
+{
+  "access_token": "eyJ...",
+  "token_type": "bearer",
+  "expires_in": 900
+}
 ```
 
-## Container deployment
+The refresh token is set as an `HttpOnly; Secure; SameSite=Strict` cookie. A `csrf_token` cookie (readable by JS) is also set and must be echoed back as the `X-CSRF-Token` header on `/auth/refresh` requests.
 
-Deployment artifacts added in this repository:
+### Bots
 
-- `Dockerfile` (multi-stage, non-root runtime user, built-in health check)
-- `.dockerignore` (reduced build context)
-- `.env.example` (documented runtime environment template)
-- `docs/deployment.md` (startup, migration flow, rollback, platform examples)
+Bot reads are public. Writes require authentication (admin-only when `JM_API_BOTS_WRITE_ADMIN_ONLY=true`).
 
-Typical flow:
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/v1/bots` | None | List bots (paginated, filterable) |
+| GET | `/api/v1/bots/{id}` | None | Get a bot by ID |
+| POST | `/api/v1/bots` | Bearer | Create a bot |
+| PUT | `/api/v1/bots/{id}` | Bearer | Update a bot |
+| DELETE | `/api/v1/bots/{id}` | Bearer | Delete a bot |
 
-```bash
-docker build -t ghcr.io/miller46/jm-api:<tag> .
-docker run --rm --env-file .env -p 8000:8000 ghcr.io/miller46/jm-api:<tag>
+List query parameters:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `page` | int | Page number (default: 1) |
+| `per_page` | int | Results per page (default: 20, max: 100) |
+| `rig_id` | string | Filter by rig ID |
+| `kill_switch` | bool | Filter by kill switch state |
+| `log_search` | string | Search in last run log |
+| `create_at_from` | RFC3339 | Filter created after |
+| `create_at_to` | RFC3339 | Filter created before |
+| `last_update_at_from` | RFC3339 | Filter updated after |
+| `last_update_at_to` | RFC3339 | Filter updated before |
+| `last_run_at_from` | RFC3339 | Filter last run after |
+| `last_run_at_to` | RFC3339 | Filter last run before |
+
+Create/update body:
+```json
+{
+  "rig_id": "my-rig-001",
+  "kill_switch": false,
+  "last_run_log": "optional log text"
+}
 ```
 
-Run migrations before app rollout:
+Bot mutations dispatch webhook events (`bot.created`, `bot.updated`, `bot.deleted`).
 
-```bash
-docker run --rm --env-file .env ghcr.io/miller46/jm-api:<tag> alembic upgrade head
+### Webhooks
+
+All webhook endpoints require authentication. Webhooks are user-scoped — users can only see and manage their own.
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/webhooks` | Bearer | Create a webhook |
+| GET | `/api/v1/webhooks` | Bearer | List webhooks for current user |
+| PATCH | `/api/v1/webhooks/{id}` | Bearer | Update a webhook |
+| DELETE | `/api/v1/webhooks/{id}` | Bearer | Delete a webhook |
+| GET | `/api/v1/webhooks/{id}/deliveries` | Bearer | List delivery logs for a webhook |
+
+Create body:
+```json
+{
+  "target_url": "https://example.com/hook",
+  "event_types": ["bot.created", "bot.updated"],
+  "secret": "minimum-8-chars"
+}
 ```
 
-See `docs/deployment.md` for complete deployment and rollback runbooks.
+Supported event types: `bot.created`, `bot.updated`, `bot.deleted`, `bot.ran`
 
-## Optional: local observability stack
+Webhook target URLs must be publicly reachable HTTPS or HTTP endpoints. `localhost`, `.local` domains, and private IP ranges are rejected.
 
-Start Prometheus + Grafana + Jaeger:
+**Delivery mechanism:** Up to 5 attempts with exponential backoff. Each delivery POSTs JSON with headers:
+- `X-Webhook-Signature: sha256=<hmac-sha256 of body>`
+- `X-Webhook-Event: <event-type>`
+- `X-Webhook-Delivery: <event-id>`
 
-```bash
-docker compose -f docker-compose.observability.yml up -d
+### Tasks
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/tasks` | Bearer | Enqueue a task |
+| GET | `/api/v1/tasks/{id}` | Bearer | Get task status and result |
+
+Create body:
+```json
+{
+  "type": "echo",
+  "payload": { "any": "json" }
+}
 ```
 
-- Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000
-- Jaeger: http://localhost:16686
+Task statuses: `queued`, `processing`, `completed`, `failed`
 
-See `docs/observability.md` for dashboard/query examples.
+### Admin
+
+Requires authentication + admin role (`is_admin = true`).
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/v1/admin/break` | Admin | Trigger health break (makes health checks fail) |
+| POST | `/api/v1/admin/break/reset` | Admin | Reset health break |
+| GET | `/api/v1/admin/break/status` | Admin | Check health break state |
+
+### Metrics
+
+```
+GET /metrics
+```
+
+Prometheus metrics exposed at `/metrics` (path configurable via `JM_API_METRICS_PATH`). Metrics tracked:
+
+- `http_requests_total` — by method, endpoint pattern, status
+- `http_request_duration_seconds` — histogram
+- `http_request_errors_total` — 4xx/5xx requests
+
+### Static Admin Dashboard
+
+A static file dashboard is served at `/admin/`. Files are embedded in the binary from the `static/` directory.
+
+## Authentication Flow
+
+The API uses a dual-token scheme:
+
+1. **Access token** — short-lived JWT (default 15 min) sent as `Authorization: Bearer <token>`
+2. **Refresh token** — longer-lived JWT (default 7 days) stored in an `HttpOnly` cookie, never accessible to JavaScript
+
+Token refresh rotates the refresh token on every use. If a revoked refresh token is presented (replay detection), all sessions for that user are immediately revoked.
+
+Access tokens are validated using the signing key list (`JM_API_JWT_SIGNING_KEYS`), which supports multiple keys to enable zero-downtime key rotation.
+
+## Configuration
+
+All configuration is via environment variables with the `JM_API_` prefix. Unset variables use the listed defaults.
+
+### Core
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_DATABASE_URL` | — | **Required.** PostgreSQL connection URL |
+| `JM_API_ENVIRONMENT` | `development` | `development`, `staging`, or `production` |
+| `JM_API_DEBUG` | `false` | Enable debug mode |
+| `JM_API_APP_NAME` | `jm-api` | Application name (used in metrics labels) |
+| `JM_API_APP_VERSION` | `0.1.0` | Application version |
+
+### Server
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_SERVER_HOST` | `0.0.0.0` | Bind address |
+| `JM_API_SERVER_PORT` | `8000` | Bind port |
+| `JM_API_SHUTDOWN_TIMEOUT` | `30` | Graceful shutdown timeout (seconds) |
+| `JM_API_API_V1_PREFIX` | `/api/v1` | API v1 route prefix |
+
+### JWT & Sessions
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_JWT_SECRET_KEY` | `change-me-...` | Primary signing key. **Must be >= 32 bytes in production.** |
+| `JM_API_JWT_SIGNING_KEYS` | — | Comma-separated list of signing keys (enables rotation). Falls back to `JM_API_JWT_SECRET_KEY`. |
+| `JM_API_JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
+| `JM_API_JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access token lifetime (minutes) |
+| `JM_API_JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh token lifetime (days) |
+| `JM_API_SESSION_CLEANUP_INTERVAL_SECONDS` | `300` | How often expired sessions are purged |
+
+### Rate Limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_RATE_LIMIT_STORAGE_URI` | `memory://` | `memory://` (dev) or a Redis URL (production required) |
+| `JM_API_RATE_LIMIT_API_PER_MINUTE` | `120` | General API rate limit per minute |
+| `JM_API_RATE_LIMIT_API_PER_HOUR` | `3000` | General API rate limit per hour |
+| `JM_API_RATE_LIMIT_QUOTA_PER_DAY` | `10000` | Daily quota |
+| `JM_API_RATE_LIMIT_QUOTA_PER_MONTH` | `200000` | Monthly quota |
+
+Rate limit keys are per-user (authenticated) or per-IP (unauthenticated). Rate limit headers (`X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`) are included on all responses.
+
+### Redis
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_REDIS_URL` | — | Redis host (omit to disable Redis) |
+| `JM_API_REDIS_PORT` | `6379` | Redis port |
+| `JM_API_REDIS_PASSWORD` | — | Redis password |
+| `JM_API_REDIS_DB` | `0` | Redis database index |
+| `JM_API_REDIS_CONNECTION_POOL_SIZE` | `10` | Minimum connection pool size |
+| `JM_API_REDIS_CONNECTION_POOL_MAX` | `20` | Maximum connection pool size |
+| `JM_API_REDIS_SOCKET_TIMEOUT` | `5` | Read/write timeout (seconds) |
+| `JM_API_REDIS_SOCKET_CONNECT_TIMEOUT` | `5` | Connection timeout (seconds) |
+
+If Redis is configured but the connection fails at startup, the server falls back to in-memory rate limiting with a warning.
+
+### CORS
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_ALLOW_ORIGINS` | — | Comma-separated list of allowed origins. CORS is disabled if unset. |
+| `JM_API_CORS_ALLOW_CREDENTIALS` | `true` | Allow credentials |
+| `JM_API_CORS_ALLOW_METHODS` | `*` | Comma-separated allowed methods |
+| `JM_API_CORS_ALLOW_HEADERS` | `*` | Comma-separated allowed headers |
+
+### Security Headers
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_SECURITY_HEADERS_ENABLED` | `true` | Enable security headers middleware |
+| `JM_API_SECURITY_HEADER_X_CONTENT_TYPE_OPTIONS` | `nosniff` | `X-Content-Type-Options` value |
+| `JM_API_SECURITY_HEADER_X_FRAME_OPTIONS` | `DENY` | `X-Frame-Options` value |
+| `JM_API_SECURITY_HEADER_HSTS_MAX_AGE` | `31536000` | HSTS max-age (seconds) |
+| `JM_API_SECURITY_HEADER_HSTS_INCLUDE_SUBDOMAINS` | `true` | HSTS includeSubDomains |
+| `JM_API_SECURITY_HEADER_HSTS_PRELOAD` | `false` | HSTS preload |
+
+### Proxy & Hosts
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_ALLOWED_HOSTS` | — | Comma-separated list of allowed Host header values |
+| `JM_API_TRUST_PROXY_HEADERS` | `false` | Trust `X-Forwarded-For` headers |
+| `JM_API_TRUSTED_PROXY_CIDRS` | — | Required when `TRUST_PROXY_HEADERS=true`. Comma-separated CIDR list. |
+| `JM_API_REQUEST_ID_HEADER` | `X-Request-ID` | Header used for request ID propagation |
+
+### Logging
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `JM_API_LOG_JSON` | `true` | Emit JSON log lines |
+| `JM_API_LOG_SAMPLE_RATE` | `1.0` | Log sampling rate (0.0–1.0) |
+| `JM_API_SLOW_QUERY_THRESHOLD_MS` | `500` | Threshold for slow query warnings (ms) |
+
+### Observability
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_METRICS_ENABLED` | `true` | Enable Prometheus metrics endpoint |
+| `JM_API_METRICS_PATH` | `/metrics` | Path to expose metrics |
+| `JM_API_TRACING_ENABLED` | `false` | Enable OTEL tracing |
+| `JM_API_TRACING_SERVICE_NAME` | `jm-api` | Service name in traces |
+| `JM_API_TRACING_SERVICE_VERSION` | `0.1.0` | Service version in traces |
+| `JM_API_TRACING_JAEGER_HOST` | `localhost` | OTLP/HTTP export host |
+| `JM_API_TRACING_JAEGER_PORT` | `6831` | OTLP/HTTP export port |
+
+### Deployment
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_GIT_SHA` | — | Git commit SHA, exposed via `/api/meta` |
+| `JM_API_DEPLOYED_AT` | — | Deployment timestamp, exposed via `/api/meta` |
+
+### Bots
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_BOTS_WRITE_ADMIN_ONLY` | `false` | Restrict bot create/update/delete to admin users |
+| `JM_API_I_UNDERSTAND_RISK` | `false` | Set to `true` to allow non-admin bot writes in production |
+
+## Production Requirements
+
+The server enforces these additional validations when `JM_API_ENVIRONMENT` is `production` or `staging`:
+
+- `JM_API_JWT_SECRET_KEY` must be at least 32 bytes
+- `JM_API_RATE_LIMIT_STORAGE_URI` must not be `memory://` (Redis required)
+- `JM_API_BOTS_WRITE_ADMIN_ONLY=true` or `JM_API_I_UNDERSTAND_RISK=true`
+- If `JM_API_TRUST_PROXY_HEADERS=true`, `JM_API_TRUSTED_PROXY_CIDRS` must be set
+- SQLite is not allowed (PostgreSQL only)
+
+## Database Migrations
+
+Migrations live in `internal/db/migrate/`. The `golang-migrate` CLI is used to apply them.
+
+```sh
+# Apply all pending migrations
+make migrate-up
+
+# Roll back the last migration
+make migrate-down
+```
+
+The `JM_API_DATABASE_URL` environment variable must be set before running either command.
+
+## Code Generation
+
+SQL queries are defined in `internal/db/queries/` and the schema is inferred from migration files. After modifying either, regenerate the Go code:
+
+```sh
+make sqlc
+# runs: sqlc generate
+```
+
+Generated files in `internal/db/sqlc/` are committed to the repository and must not be edited by hand.
+
+## Background Worker
+
+The worker polls the `tasks` table every 5 seconds for queued tasks, processing up to 10 per poll cycle. It uses a simple handler registry pattern:
+
+```go
+worker.RegisterHandler("my-task", func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
+    // process payload
+    return result, nil
+})
+```
+
+Stale `processing` tasks (e.g. from a crash) are reset to `queued` on startup.
+
+## Project Layout
+
+```
+cmd/
+  api/        — API server entrypoint
+  worker/     — Background worker entrypoint
+internal/
+  config/     — Environment-based configuration with production validation
+  db/
+    migrate/  — SQL migration files
+    queries/  — sqlc query definitions
+    sqlc/     — Generated database code (do not edit)
+  handler/    — HTTP handlers (auth, bots, webhooks, tasks, health, admin, meta)
+  middleware/ — Request ID, security headers, auth, rate limiting, shutdown guard
+  model/      — Shared domain types and response structs
+  observability/ — Logging (slog), Prometheus metrics, OTEL tracing setup
+  service/    — Auth (JWT/bcrypt/sessions), webhook delivery, worker
+  server/     — chi router assembly, dependency wiring, lifecycle management
+static/       — Embedded admin dashboard assets
+legacy/       — Original Python FastAPI source (reference only)
+```

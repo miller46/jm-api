@@ -1,11 +1,29 @@
-.PHONY: migrate migrate-create migrate-downgrade
+.PHONY: build test run worker migrate sqlc lint clean
 
-migrate:
-	uv run alembic upgrade head
+build:
+	go build -o bin/api ./cmd/api
+	go build -o bin/worker ./cmd/worker
 
-migrate-create:
-	@if [ -z "$(msg)" ]; then echo "Usage: make migrate-create msg='description'"; exit 1; fi
-	uv run alembic revision --autogenerate -m "$(msg)"
+test:
+	go test ./... -v -count=1
 
-migrate-downgrade:
-	uv run alembic downgrade -1
+run:
+	go run ./cmd/api
+
+worker:
+	go run ./cmd/worker
+
+migrate-up:
+	migrate -path internal/db/migrate -database "$$JM_API_DATABASE_URL" up
+
+migrate-down:
+	migrate -path internal/db/migrate -database "$$JM_API_DATABASE_URL" down
+
+sqlc:
+	sqlc generate
+
+lint:
+	go vet ./...
+
+clean:
+	rm -rf bin/

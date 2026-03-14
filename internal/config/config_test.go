@@ -1,0 +1,162 @@
+package config
+
+import (
+	"os"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func setEnv(t *testing.T, key, value string) {
+	t.Helper()
+	t.Setenv(key, value)
+}
+
+func TestLoad_Defaults(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "jm-api", cfg.AppName)
+	assert.Equal(t, "0.1.0", cfg.AppVersion)
+	assert.Equal(t, "development", cfg.Environment)
+	assert.False(t, cfg.Debug)
+	assert.Equal(t, "/api/v1", cfg.APIV1Prefix)
+	assert.Equal(t, "X-Request-ID", cfg.RequestIDHeader)
+	assert.True(t, cfg.SecurityHeadersEnabled)
+	assert.Equal(t, "HS256", cfg.JWTAlgorithm)
+	assert.Equal(t, 15, cfg.JWTAccessTokenExpireMin)
+	assert.Equal(t, 7, cfg.JWTRefreshTokenExpireDays)
+	assert.Equal(t, 120, cfg.RateLimitAPIPerMinute)
+	assert.Equal(t, 8000, cfg.ServerPort)
+}
+
+func TestLoad_MissingDatabaseURL(t *testing.T) {
+	os.Unsetenv("JM_API_DATABASE_URL")
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JM_API_DATABASE_URL is required")
+}
+
+func TestLoad_ProductionValidation_SQLite(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "sqlite:///test.db")
+	setEnv(t, "JM_API_ENVIRONMENT", "production")
+	setEnv(t, "JM_API_JWT_SECRET_KEY", "this-is-a-very-long-secret-key-for-production-use")
+	setEnv(t, "JM_API_RATE_LIMIT_STORAGE_URI", "redis://localhost")
+	setEnv(t, "JM_API_BOTS_WRITE_ADMIN_ONLY", "true")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SQLite not allowed")
+}
+
+func TestLoad_ProductionValidation_WeakJWT(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_ENVIRONMENT", "production")
+	setEnv(t, "JM_API_JWT_SECRET_KEY", "short")
+	setEnv(t, "JM_API_RATE_LIMIT_STORAGE_URI", "redis://localhost")
+	setEnv(t, "JM_API_BOTS_WRITE_ADMIN_ONLY", "true")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JWT secret key must be >= 32 bytes")
+}
+
+func TestLoad_ProductionValidation_MemoryRateLimit(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_ENVIRONMENT", "staging")
+	setEnv(t, "JM_API_JWT_SECRET_KEY", "this-is-a-very-long-secret-key-for-production-use")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rate limit storage must use Redis")
+}
+
+func TestLoad_ProductionValidation_BotsWriteNotAdmin(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_ENVIRONMENT", "production")
+	setEnv(t, "JM_API_JWT_SECRET_KEY", "this-is-a-very-long-secret-key-for-production-use")
+	setEnv(t, "JM_API_RATE_LIMIT_STORAGE_URI", "redis://localhost")
+	setEnv(t, "JM_API_BOTS_WRITE_ADMIN_ONLY", "false")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "bots write must be admin-only")
+}
+
+func TestLoad_ProductionValidation_TrustProxyNoCIDR(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_ENVIRONMENT", "production")
+	setEnv(t, "JM_API_JWT_SECRET_KEY", "this-is-a-very-long-secret-key-for-production-use")
+	setEnv(t, "JM_API_RATE_LIMIT_STORAGE_URI", "redis://localhost")
+	setEnv(t, "JM_API_BOTS_WRITE_ADMIN_ONLY", "true")
+	setEnv(t, "JM_API_TRUST_PROXY_HEADERS", "true")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "trusted proxy headers requires trusted CIDR list")
+}
+
+func TestLoad_InvalidSampleRate(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_LOG_SAMPLE_RATE", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "LOG_SAMPLE_RATE")
+}
+
+func TestLoad_JWTSigningKeys(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_JWT_SIGNING_KEYS", "key1,key2,key3")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, []string{"key1", "key2", "key3"}, cfg.JWTSigningKeys)
+}
+
+func TestLoad_TrustedProxyCIDRs(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_TRUSTED_PROXY_CIDRS", "10.0.0.0/8, 172.16.0.0/12")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Len(t, cfg.TrustedProxyCIDRs, 2)
+}
+
+func TestLoad_InvalidCIDR(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_TRUSTED_PROXY_CIDRS", "not-a-cidr")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid trusted proxy CIDR")
+}
+
+func TestLoad_CustomValues(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_APP_NAME", "custom-api")
+	setEnv(t, "JM_API_SERVER_PORT", "9000")
+	setEnv(t, "JM_API_DEBUG", "true")
+	setEnv(t, "JM_API_ALLOW_ORIGINS", "http://localhost:3000,http://example.com")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, "custom-api", cfg.AppName)
+	assert.Equal(t, 9000, cfg.ServerPort)
+	assert.True(t, cfg.Debug)
+	assert.Equal(t, []string{"http://localhost:3000", "http://example.com"}, cfg.AllowOrigins)
+}
+
+func TestIsProd(t *testing.T) {
+	c := &Config{Environment: "production"}
+	assert.True(t, c.IsProd())
+
+	c.Environment = "staging"
+	assert.True(t, c.IsProd())
+
+	c.Environment = "development"
+	assert.False(t, c.IsProd())
+}

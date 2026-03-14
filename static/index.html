@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="auth-header">
+    <h1>Admin Dashboard</h1>
+    <div class="auth-controls">
+      <span class="user-email" id="user-email"></span>
+      <button class="btn-logout" id="logout-btn">Logout</button>
+    </div>
+  </header>
+
+  <main id="dashboard-page">
+    <details class="table-visibility-controls" id="table-visibility-toggle">
+      <summary>Table Visibility</summary>
+      <div id="table-checkboxes">
+        <span class="loading">Loading tables...</span>
+      </div>
+    </details>
+
+    <div id="tables-loading" class="tables-loading" style="display: block;">
+      Loading tables...
+    </div>
+
+    <div id="error" class="error" style="display:none;"></div>
+
+    <ul id="tables-list">
+      <!-- Tables will be dynamically loaded here -->
+      <li data-table="bots"><a href="table.html?table=bots"><span class="table-name">bots</span><span class="table-arrow">&rarr;</span></a></li>
+    </ul>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

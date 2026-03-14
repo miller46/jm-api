@@ -1,0 +1,6 @@
+DROP TABLE IF EXISTS webhook_delivery_logs;
+DROP TABLE IF EXISTS webhooks;
+DROP TABLE IF EXISTS session_tokens;
+DROP TABLE IF EXISTS tasks;
+DROP TABLE IF EXISTS bots;
+DROP TABLE IF EXISTS users;
