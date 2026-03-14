@@ -39,11 +39,13 @@ func run() error {
 
 	queries := sqlc.New(pool)
 	worker := service.NewWorkerService(queries)
+	webhookSvc := service.NewWebhookService(queries)
 
 	// Register task handlers
 	worker.RegisterHandler("echo", func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
 		return payload, nil
 	})
+	worker.RegisterHandler(service.WebhookDeliveryTaskType, webhookSvc.HandleWebhookDeliveryTask)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()

@@ -17,10 +17,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
 	"github.com/jack/jm-api-go/internal/model"
+	"github.com/jackc/pgx/v5/pgtype"
 )
+
+const WebhookDeliveryTaskType = "webhook.delivery"
+
+type WebhookDeliveryTaskPayload struct {
+	WebhookID string          `json:"webhook_id"`
+	EventType string          `json:"event_type"`
+	Data      json.RawMessage `json:"data"`
+}
 
 type WebhookService struct {
 	queries *sqlc.Queries
@@ -248,10 +256,79 @@ func (ws *WebhookService) DispatchEvent(ctx context.Context, eventType string, d
 	}
 
 	for _, webhook := range webhooks {
-		go func(wh sqlc.Webhook) {
-			if err := ws.DeliverEvent(context.Background(), wh, eventType, data); err != nil {
-				slog.Error("webhook delivery failed", "webhook_id", wh.ID, "error", err)
-			}
-		}(webhook)
+		if err := ws.EnqueueDeliveryTask(ctx, webhook.ID, eventType, data); err != nil {
+			slog.Error("failed to enqueue webhook delivery", "webhook_id", webhook.ID, "event_type", eventType, "error", err)
+		}
 	}
+}
+
+func (ws *WebhookService) EnqueueDeliveryTask(ctx context.Context, webhookID, eventType string, data interface{}) error {
+	payload, err := marshalWebhookDeliveryTaskPayload(webhookID, eventType, data)
+	if err != nil {
+		return err
+	}
+
+	_, err = ws.queries.CreateTask(ctx, sqlc.CreateTaskParams{
+		ID:      model.GenerateID(),
+		Type:    WebhookDeliveryTaskType,
+		Payload: payload,
+	})
+	if err != nil {
+		return fmt.Errorf("creating webhook task: %w", err)
+	}
+
+	return nil
+}
+
+func marshalWebhookDeliveryTaskPayload(webhookID, eventType string, data interface{}) (json.RawMessage, error) {
+	dataJSON, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("marshal webhook task data: %w", err)
+	}
+
+	payload, err := json.Marshal(WebhookDeliveryTaskPayload{
+		WebhookID: webhookID,
+		EventType: eventType,
+		Data:      dataJSON,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal webhook task payload: %w", err)
+	}
+
+	return payload, nil
+}
+
+func (ws *WebhookService) HandleWebhookDeliveryTask(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
+	var taskPayload WebhookDeliveryTaskPayload
+	if err := json.Unmarshal(payload, &taskPayload); err != nil {
+		return nil, fmt.Errorf("unmarshal webhook task payload: %w", err)
+	}
+
+	if taskPayload.WebhookID == "" {
+		return nil, fmt.Errorf("webhook_id is required")
+	}
+	if taskPayload.EventType == "" {
+		return nil, fmt.Errorf("event_type is required")
+	}
+
+	webhook, err := ws.queries.GetWebhookByID(ctx, taskPayload.WebhookID)
+	if err != nil {
+		return nil, fmt.Errorf("get webhook: %w", err)
+	}
+	if !webhook.IsActive {
+		return json.RawMessage(`{"status":"skipped","reason":"webhook_inactive"}`), nil
+	}
+
+	var data interface{}
+	if len(taskPayload.Data) > 0 {
+		if err := json.Unmarshal(taskPayload.Data, &data); err != nil {
+			return nil, fmt.Errorf("unmarshal webhook task data: %w", err)
+		}
+	}
+
+	if err := ws.DeliverEvent(ctx, webhook, taskPayload.EventType, data); err != nil {
+		return nil, err
+	}
+
+	return json.RawMessage(`{"status":"delivered"}`), nil
 }

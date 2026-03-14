@@ -1,10 +1,13 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
 	"net"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateWebhookURL_InvalidScheme(t *testing.T) {
@@ -64,4 +67,30 @@ func TestSignPayload(t *testing.T) {
 	assert.Equal(t, sig1, sig2)
 	assert.NotEqual(t, sig1, sig3)
 	assert.Contains(t, sig1, "sha256=")
+}
+
+func TestMarshalWebhookDeliveryTaskPayload(t *testing.T) {
+	payload, err := marshalWebhookDeliveryTaskPayload("wh_123", "bot.created", map[string]interface{}{"id": "bot_1"})
+	require.NoError(t, err)
+
+	var decoded WebhookDeliveryTaskPayload
+	require.NoError(t, json.Unmarshal(payload, &decoded))
+	assert.Equal(t, "wh_123", decoded.WebhookID)
+	assert.Equal(t, "bot.created", decoded.EventType)
+
+	var data map[string]interface{}
+	require.NoError(t, json.Unmarshal(decoded.Data, &data))
+	assert.Equal(t, "bot_1", data["id"])
+}
+
+func TestHandleWebhookDeliveryTask_InvalidPayload(t *testing.T) {
+	ws := &WebhookService{}
+
+	_, err := ws.HandleWebhookDeliveryTask(context.Background(), json.RawMessage(`{"event_type":"bot.created"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "webhook_id is required")
+
+	_, err = ws.HandleWebhookDeliveryTask(context.Background(), json.RawMessage(`{"webhook_id":"wh_123"}`))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "event_type is required")
 }
