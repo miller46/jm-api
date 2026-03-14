@@ -28,8 +28,8 @@ func connectWithRetry(ctx context.Context, cfg *config.Config, sleep sleepFunc, 
 	if err != nil {
 		return nil, fmt.Errorf("parsing database URL: %w", err)
 	}
-	poolConfig.MaxConns = 20
-	poolConfig.MinConns = 2
+	poolConfig.MaxConns = int32(cfg.DBPoolMaxConns)
+	poolConfig.MinConns = int32(cfg.DBPoolMinConns)
 
 	maxAttempts := cfg.DBConnectRetryMaxAttempts
 	if !cfg.DBConnectRetryEnabled {

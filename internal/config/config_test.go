@@ -31,6 +31,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 15, cfg.JWTAccessTokenExpireMin)
 	assert.Equal(t, 7, cfg.JWTRefreshTokenExpireDays)
 	assert.Equal(t, 120, cfg.RateLimitAPIPerMinute)
+	assert.Equal(t, 20, cfg.DBPoolMaxConns)
+	assert.Equal(t, 2, cfg.DBPoolMinConns)
 	assert.Equal(t, 8000, cfg.ServerPort)
 	assert.True(t, cfg.DBConnectRetryEnabled)
 	assert.Equal(t, 5, cfg.DBConnectRetryMaxAttempts)
@@ -146,6 +148,8 @@ func TestLoad_CustomValues(t *testing.T) {
 	setEnv(t, "JM_API_SERVER_PORT", "9000")
 	setEnv(t, "JM_API_DEBUG", "true")
 	setEnv(t, "JM_API_ALLOW_ORIGINS", "http://localhost:3000,http://example.com")
+	setEnv(t, "JM_API_DB_POOL_MAX_CONNS", "50")
+	setEnv(t, "JM_API_DB_POOL_MIN_CONNS", "10")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -153,6 +157,29 @@ func TestLoad_CustomValues(t *testing.T) {
 	assert.Equal(t, 9000, cfg.ServerPort)
 	assert.True(t, cfg.Debug)
 	assert.Equal(t, []string{"http://localhost:3000", "http://example.com"}, cfg.AllowOrigins)
+	assert.Equal(t, 50, cfg.DBPoolMaxConns)
+	assert.Equal(t, 10, cfg.DBPoolMinConns)
+}
+
+func TestLoad_DBPoolLegacyEnvKeys(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "DB_POOL_MAX_CONNS", "40")
+	setEnv(t, "DB_POOL_MIN_CONNS", "8")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 40, cfg.DBPoolMaxConns)
+	assert.Equal(t, 8, cfg.DBPoolMinConns)
+}
+
+func TestLoad_DBPoolValidation_MinExceedsMax(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_POOL_MAX_CONNS", "5")
+	setEnv(t, "JM_API_DB_POOL_MIN_CONNS", "10")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot exceed max")
 }
 
 func TestLoad_InvalidDBRetryMaxAttempts(t *testing.T) {
