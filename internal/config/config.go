@@ -261,6 +261,10 @@ func (c *Config) validate() error {
 		return fmt.Errorf("DB pool min connections (%d) cannot exceed max (%d)", c.DBPoolMinConns, c.DBPoolMaxConns)
 	}
 
+	if c.RequestTimeoutDefault <= 0 || c.RequestTimeoutBotQuery <= 0 || c.RequestTimeoutWebhook <= 0 || c.RequestTimeoutAuth <= 0 || c.RequestTimeoutHealth <= 0 {
+		return fmt.Errorf("request timeouts must be > 0")
+	}
+
 	isProd := c.Environment == "production" || c.Environment == "staging"
 	if isProd {
 		if len(c.JWTSecretKey) < 32 {
