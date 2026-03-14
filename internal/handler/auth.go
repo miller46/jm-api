@@ -3,22 +3,28 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jack/jm-api-go/internal/httperr"
 	"github.com/jack/jm-api-go/internal/middleware"
 	"github.com/jack/jm-api-go/internal/model"
 	"github.com/jack/jm-api-go/internal/service"
 )
 
 type AuthHandler struct {
-	authService *service.AuthService
+	authService  *service.AuthService
+	errorHandler *httperr.Handler
 }
 
-func NewAuthHandler(authService *service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+func NewAuthHandler(authService *service.AuthService, errorHandler *httperr.Handler) *AuthHandler {
+	return &AuthHandler{
+		authService:  authService,
+		errorHandler: errorHandler,
+	}
 }
 
 type loginRequest struct {
@@ -34,36 +40,43 @@ type signupRequest struct {
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req loginRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidRequestBody.WithInternal(err))
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password are required"})
+		h.errorHandler.RespondError(w, r, httperr.ErrMissingField("email and password"))
 		return
 	}
 
 	user, err := h.authService.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		// Don't leak whether email exists or password is wrong
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidCredentials.WithInternal(err))
 		return
 	}
 
 	accessToken, expiresIn, err := h.authService.CreateAccessToken(user.ID, service.WithUserClaims(user.Email, user.IsAdmin))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create token"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "create_access_token"),
+		))
 		return
 	}
 
 	refreshToken, jti, expiresAt, err := h.authService.CreateRefreshToken(user.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create refresh token"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "create_refresh_token"),
+		))
 		return
 	}
 
 	if err := h.authService.PersistRefreshToken(r.Context(), jti, user.ID, expiresAt, r.UserAgent(), r.RemoteAddr); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist session"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "persist_refresh_token"),
+		))
 		return
 	}
 
@@ -99,23 +112,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	var req signupRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidRequestBody.WithInternal(err))
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
 	if req.Email == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password are required"})
+		h.errorHandler.RespondError(w, r, httperr.ErrMissingField("email and password"))
 		return
 	}
 
 	if len(req.Password) < 8 || len(req.Password) > 128 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be between 8 and 128 characters"})
+		h.errorHandler.RespondError(w, r, httperr.ErrValidationFailed("password must be between 8 and 128 characters"))
 		return
 	}
 
 	if !strings.Contains(req.Email, "@") {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid email format"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidField("email"))
 		return
 	}
 
@@ -123,10 +136,12 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "email already registered"})
+			h.errorHandler.RespondError(w, r, httperr.ErrDuplicate("email"))
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create user"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "create_user"),
+		))
 		return
 	}
 
@@ -142,25 +157,25 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// Get refresh token from cookie
 	cookie, err := r.Cookie("refresh_token")
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "no refresh token"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidToken)
 		return
 	}
 
 	// Validate CSRF
 	csrfCookie, err := r.Cookie("csrf_token")
 	if err != nil {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "missing CSRF cookie"})
+		h.errorHandler.RespondError(w, r, httperr.ErrCSRFInvalid.WithInternal(errors.New("missing CSRF cookie")))
 		return
 	}
 	csrfHeader := r.Header.Get("X-CSRF-Token")
 	if !service.ValidateCSRF(csrfCookie.Value, csrfHeader) {
-		writeJSON(w, http.StatusForbidden, map[string]string{"error": "CSRF validation failed"})
+		h.errorHandler.RespondError(w, r, httperr.ErrCSRFInvalid)
 		return
 	}
 
 	claims, err := h.authService.ValidateRefreshToken(cookie.Value)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid refresh token"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidToken.WithInternal(err))
 		return
 	}
 
@@ -170,12 +185,14 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// Check for replay
 	replayed, err := h.authService.DetectReplay(r.Context(), jti, userID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "session error"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "detect_replay"),
+		))
 		return
 	}
 	if replayed {
 		clearAuthCookies(w)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token reuse detected, all sessions revoked"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidToken.WithInternal(errors.New("token reuse detected")))
 		return
 	}
 
@@ -183,27 +200,31 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	state, _ := h.authService.GetRefreshTokenState(r.Context(), jti)
 	if state != "active" {
 		clearAuthCookies(w)
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "refresh token is " + state})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidToken.WithInternal(errors.New("refresh token state: "+state)))
 		return
 	}
 
 	// Rotate
 	newRefreshToken, _, refreshExpiry, err := h.authService.RotateRefreshToken(r.Context(), jti, userID, r.UserAgent(), r.RemoteAddr)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to rotate token"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "rotate_refresh_token"),
+		))
 		return
 	}
 
 	// Load user to embed claims in access token
 	user, err := h.authService.GetUserByID(r.Context(), userID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "user not found"})
+		h.errorHandler.RespondError(w, r, httperr.ErrNotFound("user").WithInternal(err))
 		return
 	}
 
 	accessToken, expiresIn, err := h.authService.CreateAccessToken(userID, service.WithUserClaims(user.Email, user.IsAdmin))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create token"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "create_access_token"),
+		))
 		return
 	}
 
@@ -254,13 +275,13 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	authUser := middleware.GetUser(r.Context())
 	if authUser == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		h.errorHandler.RespondError(w, r, httperr.ErrUnauthorized)
 		return
 	}
 
 	user, err := h.authService.GetUserByID(r.Context(), authUser.ID)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "user not found"})
+		h.errorHandler.RespondError(w, r, httperr.ErrNotFound("user").WithInternal(err))
 		return
 	}
 
@@ -275,13 +296,15 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) Sessions(w http.ResponseWriter, r *http.Request) {
 	authUser := middleware.GetUser(r.Context())
 	if authUser == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		h.errorHandler.RespondError(w, r, httperr.ErrUnauthorized)
 		return
 	}
 
 	sessions, err := h.authService.ListUserSessions(r.Context(), authUser.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list sessions"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "list_sessions"),
+		))
 		return
 	}
 
@@ -310,29 +333,32 @@ func (h *AuthHandler) Sessions(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	authUser := middleware.GetUser(r.Context())
 	if authUser == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		h.errorHandler.RespondError(w, r, httperr.ErrUnauthorized)
 		return
 	}
 
 	jti := chi.URLParam(r, "jti")
 	if jti == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "session jti required"})
+		h.errorHandler.RespondError(w, r, httperr.ErrMissingField("session jti"))
 		return
 	}
 
 	// Verify session ownership
 	session, err := h.authService.GetSession(r.Context(), jti)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		h.errorHandler.RespondError(w, r, httperr.ErrNotFound("session").WithInternal(err))
 		return
 	}
 	if session.UserID != authUser.ID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "session not found"})
+		// Return not found to avoid leaking existence of other users' sessions
+		h.errorHandler.RespondError(w, r, httperr.ErrNotFound("session"))
 		return
 	}
 
 	if err := h.authService.RevokeSession(r.Context(), jti); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke session"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "revoke_session"),
+		))
 		return
 	}
 
@@ -342,7 +368,7 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) RevokeOtherSessions(w http.ResponseWriter, r *http.Request) {
 	authUser := middleware.GetUser(r.Context())
 	if authUser == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		h.errorHandler.RespondError(w, r, httperr.ErrUnauthorized)
 		return
 	}
 
@@ -356,7 +382,9 @@ func (h *AuthHandler) RevokeOtherSessions(w http.ResponseWriter, r *http.Request
 
 	revoked, err := h.authService.RevokeOtherSessions(r.Context(), authUser.ID, currentJTI)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke sessions"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInternalServer.WithInternal(err).WithLogAttrs(
+			SlogString("operation", "revoke_other_sessions"),
+		))
 		return
 	}
 
@@ -382,4 +410,9 @@ func clearAuthCookies(w http.ResponseWriter) {
 		Secure:   true,
 		SameSite: http.SameSiteStrictMode,
 	})
+}
+
+// SlogString is a helper for creating slog.Attr from string values
+func SlogString(key, value string) slog.Attr {
+	return slog.String(key, value)
 }

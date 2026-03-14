@@ -17,6 +17,7 @@ import (
 	"github.com/jack/jm-api-go/internal/config"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
 	"github.com/jack/jm-api-go/internal/handler"
+	"github.com/jack/jm-api-go/internal/httperr"
 	"github.com/jack/jm-api-go/internal/middleware"
 	"github.com/jack/jm-api-go/internal/observability"
 	"github.com/jack/jm-api-go/internal/service"
@@ -33,6 +34,7 @@ type Server struct {
 	authService   *service.AuthService
 	webhookSvc    *service.WebhookService
 	cleanupCancel chan struct{}
+	errorHandler  *httperr.Handler
 }
 
 func New(cfg *config.Config) (*Server, error) {
@@ -65,6 +67,9 @@ func New(cfg *config.Config) (*Server, error) {
 		cfg.JWTRefreshTokenExpireDays,
 	)
 	s.webhookSvc = service.NewWebhookService(s.queries)
+
+	// Setup error handler
+	s.errorHandler = httperr.NewHandler(cfg.IsProd())
 
 	s.setupRoutes()
 
@@ -147,11 +152,12 @@ func (s *Server) setupRoutes() {
 	r := s.router
 	cfg := s.cfg
 
-	// Global middleware
+	// Global middleware - Error handling should be first to catch all errors
+	r.Use(middleware.RequestID(cfg.RequestIDHeader))
+	r.Use(middleware.NewErrorHandler(cfg.Environment, cfg.IsProd()).Middleware)
 	if len(cfg.AllowedHosts) > 0 {
 		r.Use(middleware.TrustedHost(cfg.AllowedHosts))
 	}
-	r.Use(middleware.RequestID(cfg.RequestIDHeader))
 	r.Use(middleware.SecurityHeaders(cfg))
 	r.Use(s.shutdownGuard.Middleware)
 	r.Use(middleware.BodyLimit(1 << 20)) // 1MB
@@ -180,12 +186,12 @@ func (s *Server) setupRoutes() {
 		healthOpts = append(healthOpts, handler.WithMigrationCheck(cfg.DBExpectedMigration))
 	}
 	healthH := handler.NewHealthHandler(s.db, healthOpts...)
-	authH := handler.NewAuthHandler(s.authService)
+	authH := handler.NewAuthHandler(s.authService, s.errorHandler)
 	adminH := handler.NewAdminHandler(healthH)
 	metaH := handler.NewMetaHandler(cfg)
-	botH := handler.NewBotHandler(s.queries, s.webhookSvc)
-	webhookH := handler.NewWebhookHandler(s.queries, s.webhookSvc)
-	taskH := handler.NewTaskHandler(s.queries)
+	botH := handler.NewBotHandler(s.queries, s.webhookSvc, s.errorHandler)
+	webhookH := handler.NewWebhookHandler(s.queries, s.webhookSvc, s.errorHandler)
+	taskH := handler.NewTaskHandler(s.queries, s.errorHandler)
 
 	// Auth middleware
 	authMW := middleware.Auth(cfg.JWTSigningKeys)

@@ -3,6 +3,7 @@ package model
 import (
 	"crypto/rand"
 	"math/big"
+	"net/http"
 	"time"
 )
 
@@ -122,10 +123,26 @@ type MetaResponse struct {
 	Environment string `json:"environment"`
 }
 
+// ErrorResponse is the standardized error response format
 type ErrorResponse struct {
-	Error string `json:"error"`
+	Status    int                    `json:"status"`
+	Error     string                 `json:"error"`
+	Message   string                 `json:"message"`
+	RequestID string                 `json:"request_id,omitempty"`
+	Details   map[string]interface{} `json:"details,omitempty"`
 }
 
+// NewErrorResponse creates a new standardized error response
+func NewErrorResponse(status int, message string, requestID string) ErrorResponse {
+	return ErrorResponse{
+		Status:    status,
+		Error:     http.StatusText(status),
+		Message:   message,
+		RequestID: requestID,
+	}
+}
+
+// MessageResponse is a simple status message response
 type MessageResponse struct {
 	Status string `json:"status"`
 }

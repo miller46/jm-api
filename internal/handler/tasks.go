@@ -6,15 +6,20 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
+	"github.com/jack/jm-api-go/internal/httperr"
 	"github.com/jack/jm-api-go/internal/model"
 )
 
 type TaskHandler struct {
-	queries *sqlc.Queries
+	queries      *sqlc.Queries
+	errorHandler *httperr.Handler
 }
 
-func NewTaskHandler(q *sqlc.Queries) *TaskHandler {
-	return &TaskHandler{queries: q}
+func NewTaskHandler(q *sqlc.Queries, eh *httperr.Handler) *TaskHandler {
+	return &TaskHandler{
+		queries:      q,
+		errorHandler: eh,
+	}
 }
 
 type createTaskRequest struct {
@@ -25,12 +30,12 @@ type createTaskRequest struct {
 func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createTaskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidRequestBody.WithInternal(err))
 		return
 	}
 
 	if req.Type == "" || len(req.Type) > 128 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "type is required (max 128 chars)"})
+		h.errorHandler.RespondError(w, r, httperr.ErrValidationFailed("type is required (max 128 chars)"))
 		return
 	}
 
@@ -40,7 +45,7 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Payload: req.Payload,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create task"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "create_task"))
 		return
 	}
 
@@ -51,7 +56,7 @@ func (h *TaskHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	task, err := h.queries.GetTaskByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "task not found", "id": id})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "task"))
 		return
 	}
 	writeJSON(w, http.StatusOK, taskToResponse(task))

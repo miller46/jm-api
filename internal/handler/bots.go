@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
+	"github.com/jack/jm-api-go/internal/httperr"
 	"github.com/jack/jm-api-go/internal/model"
 	"github.com/jack/jm-api-go/internal/service"
 )
@@ -18,10 +19,15 @@ import (
 type BotHandler struct {
 	queries        *sqlc.Queries
 	webhookService *service.WebhookService
+	errorHandler   *httperr.Handler
 }
 
-func NewBotHandler(q *sqlc.Queries, ws *service.WebhookService) *BotHandler {
-	return &BotHandler{queries: q, webhookService: ws}
+func NewBotHandler(q *sqlc.Queries, ws *service.WebhookService, eh *httperr.Handler) *BotHandler {
+	return &BotHandler{
+		queries:        q,
+		webhookService: ws,
+		errorHandler:   eh,
+	}
 }
 
 type createBotRequest struct {
@@ -110,13 +116,13 @@ func (h *BotHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	bots, err := h.queries.ListBots(r.Context(), params)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list bots"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "list_bots"))
 		return
 	}
 
 	total, err := h.queries.CountBots(r.Context(), countParams)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count bots"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "count_bots"))
 		return
 	}
 
@@ -140,7 +146,7 @@ func (h *BotHandler) Get(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	bot, err := h.queries.GetBotByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bot not found", "id": id})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "bot"))
 		return
 	}
 	writeJSON(w, http.StatusOK, botToResponse(bot))
@@ -149,12 +155,12 @@ func (h *BotHandler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *BotHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var req createBotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidRequestBody.WithInternal(err))
 		return
 	}
 
 	if req.RigID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "rig_id is required"})
+		h.errorHandler.RespondError(w, r, httperr.ErrMissingField("rig_id"))
 		return
 	}
 
@@ -170,7 +176,7 @@ func (h *BotHandler) Create(w http.ResponseWriter, r *http.Request) {
 		LastRunLog: lastRunLog,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create bot"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "create_bot"))
 		return
 	}
 
@@ -186,13 +192,13 @@ func (h *BotHandler) Update(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if _, err := h.queries.GetBotByID(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bot not found", "id": id})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "bot"))
 		return
 	}
 
 	var req updateBotRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidRequestBody.WithInternal(err))
 		return
 	}
 
@@ -209,7 +215,7 @@ func (h *BotHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	bot, err := h.queries.UpdateBot(r.Context(), updateParams)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update bot"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "update_bot"))
 		return
 	}
 
@@ -226,12 +232,12 @@ func (h *BotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	bot, err := h.queries.GetBotByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "bot not found", "id": id})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "bot"))
 		return
 	}
 
 	if err := h.queries.DeleteBot(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete bot"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "delete_bot"))
 		return
 	}
 

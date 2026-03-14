@@ -7,6 +7,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
+	"github.com/jack/jm-api-go/internal/httperr"
 	"github.com/jack/jm-api-go/internal/middleware"
 	"github.com/jack/jm-api-go/internal/model"
 	"github.com/jack/jm-api-go/internal/service"
@@ -15,10 +16,15 @@ import (
 type WebhookHandler struct {
 	queries        *sqlc.Queries
 	webhookService *service.WebhookService
+	errorHandler   *httperr.Handler
 }
 
-func NewWebhookHandler(q *sqlc.Queries, ws *service.WebhookService) *WebhookHandler {
-	return &WebhookHandler{queries: q, webhookService: ws}
+func NewWebhookHandler(q *sqlc.Queries, ws *service.WebhookService, eh *httperr.Handler) *WebhookHandler {
+	return &WebhookHandler{
+		queries:        q,
+		webhookService: ws,
+		errorHandler:   eh,
+	}
 }
 
 type createWebhookRequest struct {
@@ -37,40 +43,40 @@ type updateWebhookRequest struct {
 func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		h.errorHandler.RespondError(w, r, httperr.ErrUnauthorized)
 		return
 	}
 
 	var req createWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidRequestBody.WithInternal(err))
 		return
 	}
 
 	if req.TargetURL == "" || len(req.TargetURL) > 1024 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "target_url is required (max 1024 chars)"})
+		h.errorHandler.RespondError(w, r, httperr.ErrValidationFailed("target_url is required (max 1024 chars)"))
 		return
 	}
 
 	if len(req.EventTypes) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "at least one event_type is required"})
+		h.errorHandler.RespondError(w, r, httperr.ErrMissingField("at least one event_type"))
 		return
 	}
 
 	for _, et := range req.EventTypes {
 		if !model.IsValidEventType(et) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid event_type: " + et})
+			h.errorHandler.RespondError(w, r, httperr.ErrValidationFailed("invalid event_type: "+et))
 			return
 		}
 	}
 
 	if len(req.Secret) < 8 || len(req.Secret) > 255 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "secret must be between 8 and 255 characters"})
+		h.errorHandler.RespondError(w, r, httperr.ErrValidationFailed("secret must be between 8 and 255 characters"))
 		return
 	}
 
 	if err := service.ValidateWebhookURL(req.TargetURL); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		h.errorHandler.RespondError(w, r, httperr.ErrValidationFailed(err.Error()))
 		return
 	}
 
@@ -85,7 +91,7 @@ func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IsActive:   true,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create webhook"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "create_webhook"))
 		return
 	}
 
@@ -95,13 +101,13 @@ func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 func (h *WebhookHandler) List(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		h.errorHandler.RespondError(w, r, httperr.ErrUnauthorized)
 		return
 	}
 
 	webhooks, err := h.queries.ListWebhooksByUserID(r.Context(), user.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list webhooks"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "list_webhooks"))
 		return
 	}
 
@@ -116,44 +122,45 @@ func (h *WebhookHandler) List(w http.ResponseWriter, r *http.Request) {
 func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		h.errorHandler.RespondError(w, r, httperr.ErrUnauthorized)
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	existing, err := h.queries.GetWebhookByID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "webhook"))
 		return
 	}
 
 	if existing.UserID != user.ID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+		// Return not found to avoid leaking existence of other users' webhooks
+		h.errorHandler.RespondError(w, r, httperr.ErrNotFound("webhook"))
 		return
 	}
 
 	var req updateWebhookRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		h.errorHandler.RespondError(w, r, httperr.ErrInvalidRequestBody.WithInternal(err))
 		return
 	}
 
 	if req.TargetURL != nil {
 		if err := service.ValidateWebhookURL(*req.TargetURL); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			h.errorHandler.RespondError(w, r, httperr.ErrValidationFailed(err.Error()))
 			return
 		}
 	}
 
 	if req.Secret != nil && (len(*req.Secret) < 8 || len(*req.Secret) > 255) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "secret must be between 8 and 255 characters"})
+		h.errorHandler.RespondError(w, r, httperr.ErrValidationFailed("secret must be between 8 and 255 characters"))
 		return
 	}
 
 	if len(req.EventTypes) > 0 {
 		for _, et := range req.EventTypes {
 			if !model.IsValidEventType(et) {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid event_type: " + et})
+				h.errorHandler.RespondError(w, r, httperr.ErrValidationFailed("invalid event_type: "+et))
 				return
 			}
 		}
@@ -176,7 +183,7 @@ func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	webhook, err := h.queries.UpdateWebhook(r.Context(), params)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update webhook"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "update_webhook"))
 		return
 	}
 
@@ -186,19 +193,24 @@ func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 func (h *WebhookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		h.errorHandler.RespondError(w, r, httperr.ErrUnauthorized)
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	existing, err := h.queries.GetWebhookByID(r.Context(), id)
-	if err != nil || existing.UserID != user.ID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+	if err != nil {
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "webhook"))
+		return
+	}
+
+	if existing.UserID != user.ID {
+		h.errorHandler.RespondError(w, r, httperr.ErrNotFound("webhook"))
 		return
 	}
 
 	if err := h.queries.DeleteWebhook(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete webhook"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "delete_webhook"))
 		return
 	}
 
@@ -208,20 +220,25 @@ func (h *WebhookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 func (h *WebhookHandler) Deliveries(w http.ResponseWriter, r *http.Request) {
 	user := middleware.GetUser(r.Context())
 	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "not authenticated"})
+		h.errorHandler.RespondError(w, r, httperr.ErrUnauthorized)
 		return
 	}
 
 	id := chi.URLParam(r, "id")
 	existing, err := h.queries.GetWebhookByID(r.Context(), id)
-	if err != nil || existing.UserID != user.ID {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "webhook not found"})
+	if err != nil {
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "webhook"))
+		return
+	}
+
+	if existing.UserID != user.ID {
+		h.errorHandler.RespondError(w, r, httperr.ErrNotFound("webhook"))
 		return
 	}
 
 	logs, err := h.queries.ListDeliveryLogsByWebhookID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deliveries"})
+		h.errorHandler.RespondError(w, r, httperr.WrapDBError(err, "list_deliveries"))
 		return
 	}
 
