@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,10 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 7, cfg.JWTRefreshTokenExpireDays)
 	assert.Equal(t, 120, cfg.RateLimitAPIPerMinute)
 	assert.Equal(t, 8000, cfg.ServerPort)
+	assert.True(t, cfg.DBConnectRetryEnabled)
+	assert.Equal(t, 5, cfg.DBConnectRetryMaxAttempts)
+	assert.Equal(t, time.Second, cfg.DBConnectRetryInitialDelay)
+	assert.Equal(t, 30*time.Second, cfg.DBConnectRetryMaxDelay)
 }
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
@@ -148,6 +153,40 @@ func TestLoad_CustomValues(t *testing.T) {
 	assert.Equal(t, 9000, cfg.ServerPort)
 	assert.True(t, cfg.Debug)
 	assert.Equal(t, []string{"http://localhost:3000", "http://example.com"}, cfg.AllowOrigins)
+}
+
+func TestLoad_InvalidDBRetryMaxAttempts(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS")
+}
+
+func TestLoad_InvalidDBRetryDelayOrder(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS", "10")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS", "2")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS")
+}
+
+func TestLoad_CustomDBRetryValues(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_ENABLED", "false")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS", "8")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS", "2")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS", "12")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.DBConnectRetryEnabled)
+	assert.Equal(t, 8, cfg.DBConnectRetryMaxAttempts)
+	assert.Equal(t, 2*time.Second, cfg.DBConnectRetryInitialDelay)
+	assert.Equal(t, 12*time.Second, cfg.DBConnectRetryMaxDelay)
 }
 
 func TestIsProd(t *testing.T) {

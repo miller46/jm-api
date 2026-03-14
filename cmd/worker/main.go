@@ -9,10 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/jack/jm-api-go/internal/config"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
+	"github.com/jack/jm-api-go/internal/dbconn"
 	"github.com/jack/jm-api-go/internal/observability"
 	"github.com/jack/jm-api-go/internal/service"
 )
@@ -32,7 +31,7 @@ func run() error {
 
 	observability.SetupLogging(cfg.LogLevel, cfg.LogJSON, cfg.LogSampleRate)
 
-	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	pool, err := dbconn.ConnectWithRetry(context.Background(), cfg)
 	if err != nil {
 		return fmt.Errorf("connecting to database: %w", err)
 	}

@@ -10,26 +10,30 @@ import (
 )
 
 type Config struct {
-	AppName    string
-	AppVersion string
+	AppName     string
+	AppVersion  string
 	Environment string
 	Debug       bool
 
-	DatabaseURL             string
-	DBMigrationCheckEnabled bool
-	DBExpectedMigration     int
+	DatabaseURL                string
+	DBMigrationCheckEnabled    bool
+	DBExpectedMigration        int
+	DBConnectRetryEnabled      bool
+	DBConnectRetryMaxAttempts  int
+	DBConnectRetryInitialDelay time.Duration
+	DBConnectRetryMaxDelay     time.Duration
 
 	APIV1Prefix string
 
 	// Request/Security
-	RequestIDHeader                    string
-	SecurityHeadersEnabled             bool
-	SecurityHeaderXContentTypeOptions  string
-	SecurityHeaderXFrameOptions        string
-	SecurityHeaderHSTSMaxAge           int
+	RequestIDHeader                     string
+	SecurityHeadersEnabled              bool
+	SecurityHeaderXContentTypeOptions   string
+	SecurityHeaderXFrameOptions         string
+	SecurityHeaderHSTSMaxAge            int
 	SecurityHeaderHSTSIncludeSubdomains bool
-	SecurityHeaderHSTSPreload          bool
-	SecurityHeaderAdminCSP             string
+	SecurityHeaderHSTSPreload           bool
+	SecurityHeaderAdminCSP              string
 
 	// CORS
 	AllowOrigins         []string
@@ -43,9 +47,9 @@ type Config struct {
 	TrustedProxyCIDRs []*net.IPNet
 
 	// Logging
-	LogLevel          string
-	LogJSON           bool
-	LogSampleRate     float64
+	LogLevel             string
+	LogJSON              bool
+	LogSampleRate        float64
 	SlowQueryThresholdMS int
 
 	// Tracing
@@ -80,15 +84,15 @@ type Config struct {
 	RateLimitAPIPerMinute int
 
 	// Redis
-	RedisURL              string
-	RedisPort             int
-	RedisPassword         string
-	RedisDB               int
-	RedisConnPoolSize     int
-	RedisConnPoolMax      int
-	RedisSocketTimeout    int
-	RedisConnectTimeout   int
-	RedisRetryOnTimeout   bool
+	RedisURL                 string
+	RedisPort                int
+	RedisPassword            string
+	RedisDB                  int
+	RedisConnPoolSize        int
+	RedisConnPoolMax         int
+	RedisSocketTimeout       int
+	RedisConnectTimeout      int
+	RedisRetryOnTimeout      bool
 	RedisHealthCheckInterval int
 
 	// Server
@@ -101,25 +105,29 @@ type Config struct {
 
 func Load() (*Config, error) {
 	c := &Config{
-		AppName:    envOrDefault("JM_API_APP_NAME", "jm-api"),
-		AppVersion: envOrDefault("JM_API_APP_VERSION", "0.1.0"),
+		AppName:     envOrDefault("JM_API_APP_NAME", "jm-api"),
+		AppVersion:  envOrDefault("JM_API_APP_VERSION", "0.1.0"),
 		Environment: envOrDefault("JM_API_ENVIRONMENT", "development"),
 		Debug:       envBool("JM_API_DEBUG", false),
 
-		DatabaseURL:             os.Getenv("JM_API_DATABASE_URL"),
-		DBMigrationCheckEnabled: envBool("JM_API_DB_MIGRATION_CHECK_ENABLED", true),
-		DBExpectedMigration:     envInt("JM_API_DB_EXPECTED_MIGRATION", 1),
+		DatabaseURL:                os.Getenv("JM_API_DATABASE_URL"),
+		DBMigrationCheckEnabled:    envBool("JM_API_DB_MIGRATION_CHECK_ENABLED", true),
+		DBExpectedMigration:        envInt("JM_API_DB_EXPECTED_MIGRATION", 1),
+		DBConnectRetryEnabled:      envBool("JM_API_DB_CONNECT_RETRY_ENABLED", true),
+		DBConnectRetryMaxAttempts:  envInt("JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS", 5),
+		DBConnectRetryInitialDelay: time.Duration(envInt("JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS", 1)) * time.Second,
+		DBConnectRetryMaxDelay:     time.Duration(envInt("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS", 30)) * time.Second,
 
 		APIV1Prefix: envOrDefault("JM_API_API_V1_PREFIX", "/api/v1"),
 
-		RequestIDHeader:                    envOrDefault("JM_API_REQUEST_ID_HEADER", "X-Request-ID"),
-		SecurityHeadersEnabled:             envBool("JM_API_SECURITY_HEADERS_ENABLED", true),
-		SecurityHeaderXContentTypeOptions:  envOrDefault("JM_API_SECURITY_HEADER_X_CONTENT_TYPE_OPTIONS", "nosniff"),
-		SecurityHeaderXFrameOptions:        envOrDefault("JM_API_SECURITY_HEADER_X_FRAME_OPTIONS", "DENY"),
-		SecurityHeaderHSTSMaxAge:           envInt("JM_API_SECURITY_HEADER_HSTS_MAX_AGE", 31536000),
+		RequestIDHeader:                     envOrDefault("JM_API_REQUEST_ID_HEADER", "X-Request-ID"),
+		SecurityHeadersEnabled:              envBool("JM_API_SECURITY_HEADERS_ENABLED", true),
+		SecurityHeaderXContentTypeOptions:   envOrDefault("JM_API_SECURITY_HEADER_X_CONTENT_TYPE_OPTIONS", "nosniff"),
+		SecurityHeaderXFrameOptions:         envOrDefault("JM_API_SECURITY_HEADER_X_FRAME_OPTIONS", "DENY"),
+		SecurityHeaderHSTSMaxAge:            envInt("JM_API_SECURITY_HEADER_HSTS_MAX_AGE", 31536000),
 		SecurityHeaderHSTSIncludeSubdomains: envBool("JM_API_SECURITY_HEADER_HSTS_INCLUDE_SUBDOMAINS", true),
-		SecurityHeaderHSTSPreload:          envBool("JM_API_SECURITY_HEADER_HSTS_PRELOAD", false),
-		SecurityHeaderAdminCSP:             envOrDefault("JM_API_SECURITY_HEADER_ADMIN_CSP", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; frame-ancestors 'none'"),
+		SecurityHeaderHSTSPreload:           envBool("JM_API_SECURITY_HEADER_HSTS_PRELOAD", false),
+		SecurityHeaderAdminCSP:              envOrDefault("JM_API_SECURITY_HEADER_ADMIN_CSP", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; frame-ancestors 'none'"),
 
 		AllowOrigins:         envSlice("JM_API_ALLOW_ORIGINS", nil),
 		CORSAllowCredentials: envBool("JM_API_CORS_ALLOW_CREDENTIALS", true),
@@ -129,9 +137,9 @@ func Load() (*Config, error) {
 		AllowedHosts:      envSlice("JM_API_ALLOWED_HOSTS", nil),
 		TrustProxyHeaders: envBool("JM_API_TRUST_PROXY_HEADERS", false),
 
-		LogLevel:          strings.ToUpper(envOrDefault("JM_API_LOG_LEVEL", "INFO")),
-		LogJSON:           envBool("JM_API_LOG_JSON", true),
-		LogSampleRate:     envFloat("JM_API_LOG_SAMPLE_RATE", 1.0),
+		LogLevel:             strings.ToUpper(envOrDefault("JM_API_LOG_LEVEL", "INFO")),
+		LogJSON:              envBool("JM_API_LOG_JSON", true),
+		LogSampleRate:        envFloat("JM_API_LOG_SAMPLE_RATE", 1.0),
 		SlowQueryThresholdMS: envInt("JM_API_SLOW_QUERY_THRESHOLD_MS", 500),
 
 		TracingEnabled:        envBool("JM_API_TRACING_ENABLED", false),
@@ -158,15 +166,15 @@ func Load() (*Config, error) {
 		RateLimitStorageURI:   envOrDefault("JM_API_RATE_LIMIT_STORAGE_URI", "memory://"),
 		RateLimitAPIPerMinute: envInt("JM_API_RATE_LIMIT_API_PER_MINUTE", 120),
 
-		RedisURL:              os.Getenv("JM_API_REDIS_URL"),
-		RedisPort:             envInt("JM_API_REDIS_PORT", 6379),
-		RedisPassword:         os.Getenv("JM_API_REDIS_PASSWORD"),
-		RedisDB:               envInt("JM_API_REDIS_DB", 0),
-		RedisConnPoolSize:     envInt("JM_API_REDIS_CONNECTION_POOL_SIZE", 10),
-		RedisConnPoolMax:      envInt("JM_API_REDIS_CONNECTION_POOL_MAX", 20),
-		RedisSocketTimeout:    envInt("JM_API_REDIS_SOCKET_TIMEOUT", 5),
-		RedisConnectTimeout:   envInt("JM_API_REDIS_SOCKET_CONNECT_TIMEOUT", 5),
-		RedisRetryOnTimeout:   envBool("JM_API_REDIS_RETRY_ON_TIMEOUT", true),
+		RedisURL:                 os.Getenv("JM_API_REDIS_URL"),
+		RedisPort:                envInt("JM_API_REDIS_PORT", 6379),
+		RedisPassword:            os.Getenv("JM_API_REDIS_PASSWORD"),
+		RedisDB:                  envInt("JM_API_REDIS_DB", 0),
+		RedisConnPoolSize:        envInt("JM_API_REDIS_CONNECTION_POOL_SIZE", 10),
+		RedisConnPoolMax:         envInt("JM_API_REDIS_CONNECTION_POOL_MAX", 20),
+		RedisSocketTimeout:       envInt("JM_API_REDIS_SOCKET_TIMEOUT", 5),
+		RedisConnectTimeout:      envInt("JM_API_REDIS_SOCKET_CONNECT_TIMEOUT", 5),
+		RedisRetryOnTimeout:      envBool("JM_API_REDIS_RETRY_ON_TIMEOUT", true),
 		RedisHealthCheckInterval: envInt("JM_API_REDIS_HEALTH_CHECK_INTERVAL", 30),
 
 		ServerPort: envInt("JM_API_SERVER_PORT", envInt("PORT", 8000)),
@@ -208,6 +216,18 @@ func (c *Config) validate() error {
 
 	if c.LogSampleRate <= 0 || c.LogSampleRate > 1 {
 		return fmt.Errorf("JM_API_LOG_SAMPLE_RATE must be > 0 and <= 1")
+	}
+	if c.DBConnectRetryMaxAttempts <= 0 {
+		return fmt.Errorf("JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS must be > 0")
+	}
+	if c.DBConnectRetryInitialDelay <= 0 {
+		return fmt.Errorf("JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS must be > 0")
+	}
+	if c.DBConnectRetryMaxDelay <= 0 {
+		return fmt.Errorf("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS must be > 0")
+	}
+	if c.DBConnectRetryMaxDelay < c.DBConnectRetryInitialDelay {
+		return fmt.Errorf("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS must be >= JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS")
 	}
 
 	isProd := c.Environment == "production" || c.Environment == "staging"
