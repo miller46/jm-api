@@ -55,7 +55,7 @@ jobs:
     needs: quality-gates
 
     env:
-      JM_API_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db
+      JM_API_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test_db?sslmode=disable
       JM_API_JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
       JM_API_ENVIRONMENT: development
       CI: true
