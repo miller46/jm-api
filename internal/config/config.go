@@ -212,9 +212,6 @@ func (c *Config) validate() error {
 
 	isProd := c.Environment == "production" || c.Environment == "staging"
 	if isProd {
-		if strings.Contains(c.DatabaseURL, "sqlite") {
-			return fmt.Errorf("SQLite not allowed in %s; use PostgreSQL", c.Environment)
-		}
 		if len(c.JWTSecretKey) < 32 {
 			return fmt.Errorf("JWT secret key must be >= 32 bytes in %s", c.Environment)
 		}
