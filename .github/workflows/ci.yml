@@ -109,6 +109,12 @@ jobs:
           mkdir -p test-results
           go test ./... -count=1 -race -v -tags integration 2>&1 | tee test-results/test-output.txt
 
+      - name: Run chaos tests (optional)
+        continue-on-error: true
+        run: |
+          mkdir -p test-results
+          go test ./internal/integration -count=1 -v -tags integration -run "RedisUnavailable|GracefulDegradation" 2>&1 | tee test-results/chaos-test-output.txt
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
