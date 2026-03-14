@@ -40,7 +40,7 @@ func (h *TaskHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Payload: req.Payload,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create task"})
+		writeInternalError(w, r, "create task", err)
 		return
 	}
 
