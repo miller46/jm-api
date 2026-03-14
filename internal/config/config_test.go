@@ -47,16 +47,15 @@ func TestLoad_MissingDatabaseURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "JM_API_DATABASE_URL is required")
 }
 
-func TestLoad_ProductionValidation_SQLite(t *testing.T) {
-	setEnv(t, "JM_API_DATABASE_URL", "sqlite:///test.db")
+func TestLoad_ProductionValidation_DoesNotValidateDatabaseScheme(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "mysql://localhost/test")
 	setEnv(t, "JM_API_ENVIRONMENT", "production")
 	setEnv(t, "JM_API_JWT_SECRET_KEY", "this-is-a-very-long-secret-key-for-production-use")
 	setEnv(t, "JM_API_RATE_LIMIT_STORAGE_URI", "redis://localhost")
 	setEnv(t, "JM_API_BOTS_WRITE_ADMIN_ONLY", "true")
 
 	_, err := Load()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "SQLite not allowed")
+	require.NoError(t, err)
 }
 
 func TestLoad_ProductionValidation_WeakJWT(t *testing.T) {
