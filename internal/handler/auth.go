@@ -52,18 +52,18 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	accessToken, expiresIn, err := h.authService.CreateAccessToken(user.ID, service.WithUserClaims(user.Email, user.IsAdmin))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create token"})
+		writeInternalError(w, r, "create access token", err)
 		return
 	}
 
 	refreshToken, jti, expiresAt, err := h.authService.CreateRefreshToken(user.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create refresh token"})
+		writeInternalError(w, r, "create refresh token", err)
 		return
 	}
 
 	if err := h.authService.PersistRefreshToken(r.Context(), jti, user.ID, expiresAt, r.UserAgent(), r.RemoteAddr); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to persist session"})
+		writeInternalError(w, r, "persist refresh token", err)
 		return
 	}
 
@@ -126,7 +126,7 @@ func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "email already registered"})
 			return
 		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create user"})
+		writeInternalError(w, r, "signup user", err)
 		return
 	}
 
@@ -170,7 +170,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// Check for replay
 	replayed, err := h.authService.DetectReplay(r.Context(), jti, userID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "session error"})
+		writeInternalError(w, r, "detect refresh token replay", err)
 		return
 	}
 	if replayed {
@@ -190,20 +190,20 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 	// Rotate
 	newRefreshToken, _, refreshExpiry, err := h.authService.RotateRefreshToken(r.Context(), jti, userID, r.UserAgent(), r.RemoteAddr)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to rotate token"})
+		writeInternalError(w, r, "rotate refresh token", err)
 		return
 	}
 
 	// Load user to embed claims in access token
 	user, err := h.authService.GetUserByID(r.Context(), userID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "user not found"})
+		writeInternalError(w, r, "load user during refresh", err)
 		return
 	}
 
 	accessToken, expiresIn, err := h.authService.CreateAccessToken(userID, service.WithUserClaims(user.Email, user.IsAdmin))
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create token"})
+		writeInternalError(w, r, "create access token", err)
 		return
 	}
 
@@ -281,7 +281,7 @@ func (h *AuthHandler) Sessions(w http.ResponseWriter, r *http.Request) {
 
 	sessions, err := h.authService.ListUserSessions(r.Context(), authUser.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list sessions"})
+		writeInternalError(w, r, "list user sessions", err)
 		return
 	}
 
@@ -332,7 +332,7 @@ func (h *AuthHandler) RevokeSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.authService.RevokeSession(r.Context(), jti); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke session"})
+		writeInternalError(w, r, "revoke session", err)
 		return
 	}
 
@@ -356,7 +356,7 @@ func (h *AuthHandler) RevokeOtherSessions(w http.ResponseWriter, r *http.Request
 
 	revoked, err := h.authService.RevokeOtherSessions(r.Context(), authUser.ID, currentJTI)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to revoke sessions"})
+		writeInternalError(w, r, "revoke other sessions", err)
 		return
 	}
 

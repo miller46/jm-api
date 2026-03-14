@@ -85,7 +85,7 @@ func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IsActive:   true,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create webhook"})
+		writeInternalError(w, r, "create webhook", err)
 		return
 	}
 
@@ -101,7 +101,7 @@ func (h *WebhookHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	webhooks, err := h.queries.ListWebhooksByUserID(r.Context(), user.ID)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list webhooks"})
+		writeInternalError(w, r, "list webhooks", err)
 		return
 	}
 
@@ -176,7 +176,7 @@ func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	webhook, err := h.queries.UpdateWebhook(r.Context(), params)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update webhook"})
+		writeInternalError(w, r, "update webhook", err)
 		return
 	}
 
@@ -198,7 +198,7 @@ func (h *WebhookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.queries.DeleteWebhook(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete webhook"})
+		writeInternalError(w, r, "delete webhook", err)
 		return
 	}
 
@@ -221,7 +221,7 @@ func (h *WebhookHandler) Deliveries(w http.ResponseWriter, r *http.Request) {
 
 	logs, err := h.queries.ListDeliveryLogsByWebhookID(r.Context(), id)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list deliveries"})
+		writeInternalError(w, r, "list webhook deliveries", err)
 		return
 	}
 

@@ -110,13 +110,13 @@ func (h *BotHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	bots, err := h.queries.ListBots(r.Context(), params)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list bots"})
+		writeInternalError(w, r, "list bots", err)
 		return
 	}
 
 	total, err := h.queries.CountBots(r.Context(), countParams)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count bots"})
+		writeInternalError(w, r, "count bots", err)
 		return
 	}
 
@@ -170,7 +170,7 @@ func (h *BotHandler) Create(w http.ResponseWriter, r *http.Request) {
 		LastRunLog: lastRunLog,
 	})
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create bot"})
+		writeInternalError(w, r, "create bot", err)
 		return
 	}
 
@@ -209,7 +209,7 @@ func (h *BotHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	bot, err := h.queries.UpdateBot(r.Context(), updateParams)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update bot"})
+		writeInternalError(w, r, "update bot", err)
 		return
 	}
 
@@ -231,7 +231,7 @@ func (h *BotHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.queries.DeleteBot(r.Context(), id); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete bot"})
+		writeInternalError(w, r, "delete bot", err)
 		return
 	}
 
