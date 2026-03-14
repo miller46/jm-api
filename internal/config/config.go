@@ -120,7 +120,7 @@ func Load() (*Config, error) {
 		DBConnectRetryEnabled:      envBool("JM_API_DB_CONNECT_RETRY_ENABLED", true),
 		DBConnectRetryMaxAttempts:  envInt("JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS", 5),
 		DBConnectRetryInitialDelay: time.Duration(envInt("JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS", 1)) * time.Second,
-		DBConnectRetryMaxDelay:     time.Duration(envInt("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS", 30)) * time.Second,
+		DBConnectRetryMaxDelay:     time.Duration(envInt("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS", 30)) * time.Second
 
 		APIV1Prefix: envOrDefault("JM_API_API_V1_PREFIX", "/api/v1"),
 

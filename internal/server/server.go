@@ -81,7 +81,9 @@ func (s *Server) setupDB() error {
 	if err != nil {
 		return err
 	}
+
 	s.db = pool
+	slog.Info("database connected", "db_pool_max_conns", s.cfg.DBPoolMaxConns, "db_pool_min_conns", s.cfg.DBPoolMinConns)
 	return nil
 }
 
