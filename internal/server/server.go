@@ -152,6 +152,7 @@ func (s *Server) setupRoutes() {
 		r.Use(middleware.TrustedHost(cfg.AllowedHosts))
 	}
 	r.Use(middleware.RequestID(cfg.RequestIDHeader))
+	r.Use(middleware.ErrorHandler())
 	r.Use(middleware.SecurityHeaders(cfg))
 	r.Use(s.shutdownGuard.Middleware)
 	r.Use(middleware.BodyLimit(1 << 20)) // 1MB
