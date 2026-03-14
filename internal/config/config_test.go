@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,6 +32,11 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 7, cfg.JWTRefreshTokenExpireDays)
 	assert.Equal(t, 120, cfg.RateLimitAPIPerMinute)
 	assert.Equal(t, 8000, cfg.ServerPort)
+	assert.Equal(t, 30*time.Second, cfg.RequestTimeoutDefault)
+	assert.Equal(t, 10*time.Second, cfg.RequestTimeoutBotQuery)
+	assert.Equal(t, 60*time.Second, cfg.RequestTimeoutWebhook)
+	assert.Equal(t, 5*time.Second, cfg.RequestTimeoutAuth)
+	assert.Equal(t, 2*time.Second, cfg.RequestTimeoutHealth)
 }
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
@@ -141,6 +147,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	setEnv(t, "JM_API_SERVER_PORT", "9000")
 	setEnv(t, "JM_API_DEBUG", "true")
 	setEnv(t, "JM_API_ALLOW_ORIGINS", "http://localhost:3000,http://example.com")
+	setEnv(t, "JM_API_REQUEST_TIMEOUT_DEFAULT", "45s")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -148,6 +155,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	assert.Equal(t, 9000, cfg.ServerPort)
 	assert.True(t, cfg.Debug)
 	assert.Equal(t, []string{"http://localhost:3000", "http://example.com"}, cfg.AllowOrigins)
+	assert.Equal(t, 45*time.Second, cfg.RequestTimeoutDefault)
 }
 
 func TestIsProd(t *testing.T) {
