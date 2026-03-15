@@ -1,16 +1,15 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jack/jm-api-go/internal/middleware"
 	"github.com/jack/jm-api-go/internal/model"
 	"github.com/jack/jm-api-go/internal/service"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type AuthHandler struct {
@@ -21,28 +20,24 @@ func NewAuthHandler(authService *service.AuthService) *AuthHandler {
 	return &AuthHandler{authService: authService}
 }
 
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+type LoginRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8,max=128"`
 }
 
-type signupRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
+type SignupRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8,max=128"`
 }
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, ok := middleware.GetValidatedBody[LoginRequest](r.Context())
+	if !ok {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
-	if req.Email == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password are required"})
-		return
-	}
 
 	user, err := h.authService.Login(r.Context(), req.Email, req.Password)
 	if err != nil {
@@ -97,27 +92,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AuthHandler) Signup(w http.ResponseWriter, r *http.Request) {
-	var req signupRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	req, ok := middleware.GetValidatedBody[SignupRequest](r.Context())
+	if !ok {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 		return
 	}
 
 	req.Email = strings.TrimSpace(strings.ToLower(req.Email))
-	if req.Email == "" || req.Password == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email and password are required"})
-		return
-	}
-
-	if len(req.Password) < 8 || len(req.Password) > 128 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "password must be between 8 and 128 characters"})
-		return
-	}
-
-	if !strings.Contains(req.Email, "@") {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid email format"})
-		return
-	}
 
 	user, err := h.authService.Signup(r.Context(), req.Email, req.Password)
 	if err != nil {

@@ -193,6 +193,7 @@ func (s *Server) setupRoutes() {
 
 	// Auth middleware
 	authMW := middleware.Auth(cfg.JWTSigningKeys)
+	requestValidator := middleware.NewRequestValidator()
 
 	r.Route(cfg.APIV1Prefix, func(r chi.Router) {
 		r.Use(rateLimiter.Middleware)
@@ -213,8 +214,8 @@ func (s *Server) setupRoutes() {
 		// Auth routes (mostly public)
 		r.Route("/auth", func(r chi.Router) {
 			r.Use(middleware.RequestTimeout(cfg.RequestTimeoutAuth))
-			r.Post("/login", authH.Login)
-			r.Post("/signup", authH.Signup)
+			r.With(middleware.ValidateBody[handler.LoginRequest](requestValidator)).Post("/login", authH.Login)
+			r.With(middleware.ValidateBody[handler.SignupRequest](requestValidator)).Post("/signup", authH.Signup)
 			r.Post("/refresh", authH.Refresh)
 
 			r.Group(func(r chi.Router) {
