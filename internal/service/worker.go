@@ -14,6 +14,7 @@ import (
 	"github.com/jack/jm-api-go/internal/workerpool"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type TaskHandler func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
@@ -32,8 +33,42 @@ type workerQueries interface {
 	ResetStaleTasks(ctx context.Context) error
 }
 
+type workerTransactor interface {
+	InTx(ctx context.Context, fn func(q workerQueries) error) error
+}
+
+type sqlcWorkerTransactor struct {
+	pool    *pgxpool.Pool
+	queries *sqlc.Queries
+}
+
+func (t *sqlcWorkerTransactor) InTx(ctx context.Context, fn func(q workerQueries) error) error {
+	tx, err := t.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if err := fn(t.queries.WithTx(tx)); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
 type WorkerService struct {
 	queries        workerQueries
+	transactor     workerTransactor
 	handlers       map[string]TaskHandler
 	pollInterval   time.Duration
 	maxPerPoll     int
@@ -45,10 +80,11 @@ type WorkerService struct {
 	running bool
 }
 
-func NewWorkerService(q workerQueries) *WorkerService {
+func NewWorkerService(q workerQueries, transactor workerTransactor) *WorkerService {
 	maxConcurrency := workerpool.DefaultMaxConcurrency
 	return &WorkerService{
 		queries:        q,
+		transactor:     transactor,
 		handlers:       make(map[string]TaskHandler),
 		pollInterval:   defaultWorkerPollInterval,
 		maxPerPoll:     maxConcurrency,
@@ -56,6 +92,10 @@ func NewWorkerService(q workerQueries) *WorkerService {
 		maxConcurrency: maxConcurrency,
 		pool:           workerpool.New(maxConcurrency),
 	}
+}
+
+func NewWorkerServiceFromSQLC(pool *pgxpool.Pool, queries *sqlc.Queries) *WorkerService {
+	return NewWorkerService(queries, &sqlcWorkerTransactor{pool: pool, queries: queries})
 }
 
 func (ws *WorkerService) Configure(concurrency int, pollInterval time.Duration, maxPerPoll int, taskTimeout time.Duration) {
@@ -130,30 +170,42 @@ func (ws *WorkerService) ProcessTask(ctx context.Context) (bool, error) {
 }
 
 func (ws *WorkerService) markTaskFailed(ctx context.Context, task sqlc.Task, errMsg string) error {
-	updatedTask, err := ws.queries.FailTask(ctx, sqlc.FailTaskParams{
-		ID:    task.ID,
-		Error: pgtype.Text{String: errMsg, Valid: true},
-	})
-	if err != nil {
-		return fmt.Errorf("failing task: %w", err)
-	}
+	var dlqTask *sqlc.Task
+	if err := ws.transactor.InTx(ctx, func(q workerQueries) error {
+		updatedTask, err := q.FailTask(ctx, sqlc.FailTaskParams{
+			ID:    task.ID,
+			Error: pgtype.Text{String: errMsg, Valid: true},
+		})
+		if err != nil {
+			return fmt.Errorf("failing task: %w", err)
+		}
 
-	if updatedTask.RetryCount < maxTaskRetries {
+		if updatedTask.RetryCount < maxTaskRetries {
+			return nil
+		}
+
+		// Keep the original task row for operational history; failed_tasks is the durable DLQ view.
+		if _, err := q.CreateFailedTask(ctx, sqlc.CreateFailedTaskParams{
+			OriginalTaskID: updatedTask.ID,
+			TaskType:       updatedTask.Type,
+			Payload:        updatedTask.Payload,
+			ErrorMessage:   errMsg,
+			ErrorStack:     pgtype.Text{},
+			AttemptCount:   updatedTask.RetryCount,
+		}); err != nil {
+			return fmt.Errorf("adding task to dead letter queue: %w", err)
+		}
+
+		dlqTask = &updatedTask
 		return nil
-	}
-
-	if _, err := ws.queries.CreateFailedTask(ctx, sqlc.CreateFailedTaskParams{
-		OriginalTaskID: updatedTask.ID,
-		TaskType:       updatedTask.Type,
-		Payload:        updatedTask.Payload,
-		ErrorMessage:   errMsg,
-		ErrorStack:     pgtype.Text{},
-		AttemptCount:   updatedTask.RetryCount,
 	}); err != nil {
-		return fmt.Errorf("adding task to dead letter queue: %w", err)
+		return err
 	}
 
-	slog.Error("task moved to dead letter queue", "task_id", updatedTask.ID, "type", updatedTask.Type, "attempt_count", updatedTask.RetryCount)
+	if dlqTask != nil {
+		slog.Error("task moved to dead letter queue", "task_id", dlqTask.ID, "type", dlqTask.Type, "attempt_count", dlqTask.RetryCount)
+	}
+
 	return nil
 }
 
