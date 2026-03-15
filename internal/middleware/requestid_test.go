@@ -36,3 +36,18 @@ func TestRequestID_PropagatesExisting(t *testing.T) {
 
 	assert.Equal(t, "test-id-123", rr.Header().Get("X-Request-ID"))
 }
+
+func TestRequestID_PreservesHeaderWhenDownstreamClearsItOnError(t *testing.T) {
+	handler := RequestID("X-Request-ID")(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Del("X-Request-ID")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("X-Request-ID", "req-err-999")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+	assert.Equal(t, "req-err-999", rr.Header().Get("X-Request-ID"))
+}
