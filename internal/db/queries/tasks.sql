@@ -13,7 +13,7 @@ SET status = 'processing',
     last_update_at = NOW()
 WHERE id = (
     SELECT id FROM tasks
-    WHERE (status = 'queued' OR (status = 'failed' AND retry_count < 3))
+    WHERE (status = 'queued' OR (status = 'failed' AND retry_count < 5))
     ORDER BY create_at ASC
     LIMIT 1
     FOR UPDATE SKIP LOCKED

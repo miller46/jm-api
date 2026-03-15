@@ -21,6 +21,18 @@ type Bot struct {
 	LastUpdateAt time.Time   `json:"last_update_at"`
 }
 
+type FailedTask struct {
+	ID             int64       `json:"id"`
+	OriginalTaskID string      `json:"original_task_id"`
+	TaskType       string      `json:"task_type"`
+	Payload        []byte      `json:"payload"`
+	ErrorMessage   string      `json:"error_message"`
+	ErrorStack     pgtype.Text `json:"error_stack"`
+	AttemptCount   int32       `json:"attempt_count"`
+	FinalAttemptAt time.Time   `json:"final_attempt_at"`
+	CreateAt       time.Time   `json:"create_at"`
+}
+
 type SessionToken struct {
 	TokenJti       string      `json:"token_jti"`
 	UserID         string      `json:"user_id"`
