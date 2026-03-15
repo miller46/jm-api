@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-const defaultMaxConcurrency = 10
+const DefaultMaxConcurrency = 10
 
 // Pool runs submitted tasks with a bounded concurrency.
 type Pool struct {
@@ -15,7 +15,7 @@ type Pool struct {
 
 func New(maxConcurrency int) *Pool {
 	if maxConcurrency <= 0 {
-		maxConcurrency = defaultMaxConcurrency
+		maxConcurrency = DefaultMaxConcurrency
 	}
 	return &Pool{sem: make(chan struct{}, maxConcurrency)}
 }

@@ -6,15 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
 	"github.com/jack/jm-api-go/internal/workerpool"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type TaskHandler func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
+
+const (
+	defaultWorkerPollInterval = 5 * time.Second
+	defaultWorkerTaskTimeout  = 30 * time.Second
+)
 
 type WorkerService struct {
 	queries        *sqlc.Queries
@@ -24,16 +31,19 @@ type WorkerService struct {
 	taskTimeout    time.Duration
 	maxConcurrency int
 	pool           *workerpool.Pool
+
+	mu      sync.RWMutex
+	running bool
 }
 
 func NewWorkerService(q *sqlc.Queries) *WorkerService {
-	maxConcurrency := 10
+	maxConcurrency := workerpool.DefaultMaxConcurrency
 	return &WorkerService{
 		queries:        q,
 		handlers:       make(map[string]TaskHandler),
-		pollInterval:   5 * time.Second,
-		maxPerPoll:     10,
-		taskTimeout:    30 * time.Second,
+		pollInterval:   defaultWorkerPollInterval,
+		maxPerPoll:     maxConcurrency,
+		taskTimeout:    defaultWorkerTaskTimeout,
 		maxConcurrency: maxConcurrency,
 		pool:           workerpool.New(maxConcurrency),
 	}
@@ -41,16 +51,24 @@ func NewWorkerService(q *sqlc.Queries) *WorkerService {
 
 func (ws *WorkerService) Configure(concurrency int, pollInterval time.Duration, maxPerPoll int, taskTimeout time.Duration) {
 	if concurrency <= 0 {
-		concurrency = 10
+		concurrency = workerpool.DefaultMaxConcurrency
 	}
 	if pollInterval <= 0 {
-		pollInterval = 5 * time.Second
+		pollInterval = defaultWorkerPollInterval
 	}
 	if maxPerPoll <= 0 {
 		maxPerPoll = concurrency
 	}
 	if taskTimeout <= 0 {
-		taskTimeout = 30 * time.Second
+		taskTimeout = defaultWorkerTaskTimeout
+	}
+
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	if ws.running {
+		slog.Warn("worker configure ignored while running")
+		return
 	}
 
 	ws.maxConcurrency = concurrency
@@ -109,11 +127,27 @@ func (ws *WorkerService) ProcessTask(ctx context.Context) (bool, error) {
 }
 
 func (ws *WorkerService) RunForever(ctx context.Context) error {
+	ws.mu.Lock()
+	if ws.running {
+		ws.mu.Unlock()
+		return fmt.Errorf("worker already running")
+	}
+	ws.running = true
+	ws.mu.Unlock()
+
+	defer func() {
+		ws.mu.Lock()
+		ws.running = false
+		ws.mu.Unlock()
+	}()
+
+	pollInterval, maxPerPoll, taskTimeout, maxConcurrency, pool := ws.settingsSnapshot()
+
 	slog.Info("worker started",
-		"poll_interval", ws.pollInterval,
-		"max_per_poll", ws.maxPerPoll,
-		"max_concurrency", ws.maxConcurrency,
-		"task_timeout", ws.taskTimeout,
+		"poll_interval", pollInterval,
+		"max_per_poll", maxPerPoll,
+		"max_concurrency", maxConcurrency,
+		"task_timeout", taskTimeout,
 	)
 
 	// Reset stale tasks on startup
@@ -124,48 +158,59 @@ func (ws *WorkerService) RunForever(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			slog.Info("worker shutting down: waiting for in-flight tasks")
-			ws.pool.Wait()
+			pool.Wait()
 			slog.Info("worker shut down complete")
 			return nil
 		}
 
-		results := make(chan bool, ws.maxPerPoll)
+		var batchWG sync.WaitGroup
+		var processed int32
 		submitted := 0
-		for i := 0; i < ws.maxPerPoll; i++ {
+
+		for i := 0; i < maxPerPoll; i++ {
 			if ctx.Err() != nil {
 				break
 			}
 
-			err := ws.pool.Submit(func() {
-				taskCtx, cancel := context.WithTimeout(context.Background(), ws.taskTimeout)
+			batchWG.Add(1)
+			err := pool.Submit(func() {
+				defer batchWG.Done()
+
+				taskCtx, cancel := context.WithTimeout(context.Background(), taskTimeout)
 				defer cancel()
 
 				found, runErr := ws.ProcessTask(taskCtx)
 				if runErr != nil {
 					slog.Error("task processing error", "error", runErr)
 				}
-				results <- found
+				if found {
+					atomic.AddInt32(&processed, 1)
+				}
 			})
 			if err != nil {
-				slog.Error("failed to submit task to worker pool", "error", err)
+				batchWG.Done()
+				slog.Error("failed to submit task to worker pool", "task_index", i, "error", err)
 				break
 			}
 			submitted++
 		}
 
-		processed := 0
-		for i := 0; i < submitted; i++ {
-			if <-results {
-				processed++
-			}
+		if submitted > 0 {
+			batchWG.Wait()
 		}
 
-		if processed == 0 {
+		if atomic.LoadInt32(&processed) == 0 {
 			select {
 			case <-ctx.Done():
 				continue
-			case <-time.After(ws.pollInterval):
+			case <-time.After(pollInterval):
 			}
 		}
 	}
+}
+
+func (ws *WorkerService) settingsSnapshot() (time.Duration, int, time.Duration, int, *workerpool.Pool) {
+	ws.mu.RLock()
+	defer ws.mu.RUnlock()
+	return ws.pollInterval, ws.maxPerPoll, ws.taskTimeout, ws.maxConcurrency, ws.pool
 }
