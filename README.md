@@ -84,7 +84,13 @@ make test
 go test ./... -v -count=1
 ```
 
-42 tests cover config, middleware, model, observability, and service packages. Handler tests are not included (require a live database).
+Test coverage includes handler integration tests backed by ephemeral Postgres via testcontainers-go.
+
+To run only integration tests:
+
+```sh
+go test ./... -v -count=1 -tags integration
+```
 
 ## API Reference
 
