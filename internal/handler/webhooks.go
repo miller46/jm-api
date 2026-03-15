@@ -5,11 +5,11 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
 	"github.com/jack/jm-api-go/internal/middleware"
 	"github.com/jack/jm-api-go/internal/model"
 	"github.com/jack/jm-api-go/internal/service"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type WebhookHandler struct {
@@ -32,6 +32,41 @@ type updateWebhookRequest struct {
 	EventTypes []string `json:"event_types"`
 	Secret     *string  `json:"secret"`
 	IsActive   *bool    `json:"is_active"`
+}
+
+type verifyWebhookSignatureRequest struct {
+	Payload   json.RawMessage `json:"payload"`
+	Signature string          `json:"signature"`
+	Secret    string          `json:"secret"`
+}
+
+type verifyWebhookSignatureResponse struct {
+	Valid bool `json:"valid"`
+}
+
+func (h *WebhookHandler) Verify(w http.ResponseWriter, r *http.Request) {
+	var req verifyWebhookSignatureRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+		return
+	}
+
+	if len(req.Payload) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload is required"})
+		return
+	}
+	if req.Signature == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "signature is required"})
+		return
+	}
+	if req.Secret == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "secret is required"})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, verifyWebhookSignatureResponse{
+		Valid: service.VerifyWebhookSignature(req.Secret, req.Payload, req.Signature),
+	})
 }
 
 func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {

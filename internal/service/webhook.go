@@ -147,6 +147,15 @@ func signPayload(secret string, payload []byte) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
+func SignWebhookPayload(secret string, payload []byte) string {
+	return signPayload(secret, payload)
+}
+
+func VerifyWebhookSignature(secret string, payload []byte, providedSignature string) bool {
+	expected := signPayload(secret, payload)
+	return hmac.Equal([]byte(expected), []byte(strings.TrimSpace(providedSignature)))
+}
+
 func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook, eventType string, data interface{}) error {
 	event := WebhookEvent{
 		ID:             model.GenerateID(),
