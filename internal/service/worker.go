@@ -11,24 +11,53 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
+	"github.com/jack/jm-api-go/internal/workerpool"
 )
 
 type TaskHandler func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
 
 type WorkerService struct {
-	queries      *sqlc.Queries
-	handlers     map[string]TaskHandler
-	pollInterval time.Duration
-	maxPerPoll   int
+	queries        *sqlc.Queries
+	handlers       map[string]TaskHandler
+	pollInterval   time.Duration
+	maxPerPoll     int
+	taskTimeout    time.Duration
+	maxConcurrency int
+	pool           *workerpool.Pool
 }
 
 func NewWorkerService(q *sqlc.Queries) *WorkerService {
+	maxConcurrency := 10
 	return &WorkerService{
-		queries:      q,
-		handlers:     make(map[string]TaskHandler),
-		pollInterval: 5 * time.Second,
-		maxPerPoll:   10,
+		queries:        q,
+		handlers:       make(map[string]TaskHandler),
+		pollInterval:   5 * time.Second,
+		maxPerPoll:     10,
+		taskTimeout:    30 * time.Second,
+		maxConcurrency: maxConcurrency,
+		pool:           workerpool.New(maxConcurrency),
 	}
+}
+
+func (ws *WorkerService) Configure(concurrency int, pollInterval time.Duration, maxPerPoll int, taskTimeout time.Duration) {
+	if concurrency <= 0 {
+		concurrency = 10
+	}
+	if pollInterval <= 0 {
+		pollInterval = 5 * time.Second
+	}
+	if maxPerPoll <= 0 {
+		maxPerPoll = concurrency
+	}
+	if taskTimeout <= 0 {
+		taskTimeout = 30 * time.Second
+	}
+
+	ws.maxConcurrency = concurrency
+	ws.pollInterval = pollInterval
+	ws.maxPerPoll = maxPerPoll
+	ws.taskTimeout = taskTimeout
+	ws.pool = workerpool.New(concurrency)
 }
 
 func (ws *WorkerService) RegisterHandler(taskType string, handler TaskHandler) {
@@ -80,7 +109,12 @@ func (ws *WorkerService) ProcessTask(ctx context.Context) (bool, error) {
 }
 
 func (ws *WorkerService) RunForever(ctx context.Context) error {
-	slog.Info("worker started", "poll_interval", ws.pollInterval)
+	slog.Info("worker started",
+		"poll_interval", ws.pollInterval,
+		"max_per_poll", ws.maxPerPoll,
+		"max_concurrency", ws.maxConcurrency,
+		"task_timeout", ws.taskTimeout,
+	)
 
 	// Reset stale tasks on startup
 	if err := ws.queries.ResetStaleTasks(ctx); err != nil {
@@ -88,29 +122,49 @@ func (ws *WorkerService) RunForever(ctx context.Context) error {
 	}
 
 	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("worker shutting down")
+		if err := ctx.Err(); err != nil {
+			slog.Info("worker shutting down: waiting for in-flight tasks")
+			ws.pool.Wait()
+			slog.Info("worker shut down complete")
 			return nil
-		default:
-			processed := 0
-			for i := 0; i < ws.maxPerPoll; i++ {
-				found, err := ws.ProcessTask(ctx)
-				if err != nil {
-					slog.Error("task processing error", "error", err)
-				}
-				if !found {
-					break
-				}
-				processed++
+		}
+
+		results := make(chan bool, ws.maxPerPoll)
+		submitted := 0
+		for i := 0; i < ws.maxPerPoll; i++ {
+			if ctx.Err() != nil {
+				break
 			}
 
-			if processed == 0 {
-				select {
-				case <-ctx.Done():
-					return nil
-				case <-time.After(ws.pollInterval):
+			err := ws.pool.Submit(func() {
+				taskCtx, cancel := context.WithTimeout(context.Background(), ws.taskTimeout)
+				defer cancel()
+
+				found, runErr := ws.ProcessTask(taskCtx)
+				if runErr != nil {
+					slog.Error("task processing error", "error", runErr)
 				}
+				results <- found
+			})
+			if err != nil {
+				slog.Error("failed to submit task to worker pool", "error", err)
+				break
+			}
+			submitted++
+		}
+
+		processed := 0
+		for i := 0; i < submitted; i++ {
+			if <-results {
+				processed++
+			}
+		}
+
+		if processed == 0 {
+			select {
+			case <-ctx.Done():
+				continue
+			case <-time.After(ws.pollInterval):
 			}
 		}
 	}
