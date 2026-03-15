@@ -18,6 +18,8 @@ type Config struct {
 	DatabaseURL             string
 	DBMigrationCheckEnabled bool
 	DBExpectedMigration     int
+	DBPoolMaxConns          int
+	DBPoolMinConns          int
 
 	APIV1Prefix string
 
@@ -116,6 +118,8 @@ func Load() (*Config, error) {
 		DatabaseURL:             os.Getenv("JM_API_DATABASE_URL"),
 		DBMigrationCheckEnabled: envBool("JM_API_DB_MIGRATION_CHECK_ENABLED", true),
 		DBExpectedMigration:     envInt("JM_API_DB_EXPECTED_MIGRATION", 1),
+		DBPoolMaxConns:          envIntFromKeys([]string{"JM_API_DB_POOL_MAX_CONNS", "DB_POOL_MAX_CONNS"}, 20),
+		DBPoolMinConns:          envIntFromKeys([]string{"JM_API_DB_POOL_MIN_CONNS", "DB_POOL_MIN_CONNS"}, 2),
 
 		APIV1Prefix: envOrDefault("JM_API_API_V1_PREFIX", "/api/v1"),
 
@@ -227,11 +231,18 @@ func (c *Config) validate() error {
 		return fmt.Errorf("request timeouts must be > 0")
 	}
 
+	if c.DBPoolMaxConns <= 0 {
+		return fmt.Errorf("DB pool max connections must be > 0")
+	}
+	if c.DBPoolMinConns < 0 {
+		return fmt.Errorf("DB pool min connections must be >= 0")
+	}
+	if c.DBPoolMinConns > c.DBPoolMaxConns {
+		return fmt.Errorf("DB pool min connections (%d) cannot exceed max (%d)", c.DBPoolMinConns, c.DBPoolMaxConns)
+	}
+
 	isProd := c.Environment == "production" || c.Environment == "staging"
 	if isProd {
-		if strings.Contains(c.DatabaseURL, "sqlite") {
-			return fmt.Errorf("SQLite not allowed in %s; use PostgreSQL", c.Environment)
-		}
 		if len(c.JWTSecretKey) < 32 {
 			return fmt.Errorf("JWT secret key must be >= 32 bytes in %s", c.Environment)
 		}
@@ -282,6 +293,19 @@ func envInt(key string, defaultVal int) int {
 		return defaultVal
 	}
 	return i
+}
+
+func envIntFromKeys(keys []string, defaultVal int) int {
+	for _, key := range keys {
+		if v := os.Getenv(key); v != "" {
+			i, err := strconv.Atoi(v)
+			if err != nil {
+				return defaultVal
+			}
+			return i
+		}
+	}
+	return defaultVal
 }
 
 func envFloat(key string, defaultVal float64) float64 {

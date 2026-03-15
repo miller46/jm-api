@@ -46,7 +46,7 @@ func New(cfg *config.Config) (*Server, error) {
 	observability.SetupLogging(cfg.LogLevel, cfg.LogJSON, cfg.LogSampleRate)
 
 	// Setup database
-	if err := s.setupDB(cfg.DatabaseURL); err != nil {
+	if err := s.setupDB(cfg); err != nil {
 		return nil, fmt.Errorf("setting up database: %w", err)
 	}
 
@@ -75,13 +75,13 @@ func New(cfg *config.Config) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) setupDB(databaseURL string) error {
-	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+func (s *Server) setupDB(cfg *config.Config) error {
+	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("parsing database URL: %w", err)
 	}
-	poolConfig.MaxConns = 20
-	poolConfig.MinConns = 2
+	poolConfig.MaxConns = int32(cfg.DBPoolMaxConns)
+	poolConfig.MinConns = int32(cfg.DBPoolMinConns)
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {
@@ -93,7 +93,7 @@ func (s *Server) setupDB(databaseURL string) error {
 	}
 
 	s.db = pool
-	slog.Info("database connected")
+	slog.Info("database connected", "db_pool_max_conns", cfg.DBPoolMaxConns, "db_pool_min_conns", cfg.DBPoolMinConns)
 	return nil
 }
 
