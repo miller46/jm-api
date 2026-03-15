@@ -97,6 +97,13 @@ type Config struct {
 	ServerPort int
 	ServerHost string
 
+	// Request timeouts
+	RequestTimeoutDefault  time.Duration
+	RequestTimeoutBotQuery time.Duration
+	RequestTimeoutWebhook  time.Duration
+	RequestTimeoutAuth     time.Duration
+	RequestTimeoutHealth   time.Duration
+
 	// Graceful shutdown
 	ShutdownTimeout time.Duration
 }
@@ -176,6 +183,12 @@ func Load() (*Config, error) {
 		ServerPort: envInt("JM_API_SERVER_PORT", envInt("PORT", 8000)),
 		ServerHost: envOrDefault("JM_API_SERVER_HOST", "0.0.0.0"),
 
+		RequestTimeoutDefault:  envDuration("JM_API_REQUEST_TIMEOUT_DEFAULT", 30*time.Second),
+		RequestTimeoutBotQuery: envDuration("JM_API_REQUEST_TIMEOUT_BOT_QUERY", 10*time.Second),
+		RequestTimeoutWebhook:  envDuration("JM_API_REQUEST_TIMEOUT_WEBHOOK", 60*time.Second),
+		RequestTimeoutAuth:     envDuration("JM_API_REQUEST_TIMEOUT_AUTH", 5*time.Second),
+		RequestTimeoutHealth:   envDuration("JM_API_REQUEST_TIMEOUT_HEALTH", 2*time.Second),
+
 		ShutdownTimeout: time.Duration(envInt("JM_API_SHUTDOWN_TIMEOUT", 30)) * time.Second,
 	}
 
@@ -212,6 +225,10 @@ func (c *Config) validate() error {
 
 	if c.LogSampleRate <= 0 || c.LogSampleRate > 1 {
 		return fmt.Errorf("JM_API_LOG_SAMPLE_RATE must be > 0 and <= 1")
+	}
+
+	if c.RequestTimeoutDefault <= 0 || c.RequestTimeoutBotQuery <= 0 || c.RequestTimeoutWebhook <= 0 || c.RequestTimeoutAuth <= 0 || c.RequestTimeoutHealth <= 0 {
+		return fmt.Errorf("request timeouts must be > 0")
 	}
 
 	if c.DBPoolMaxConns <= 0 {
@@ -301,6 +318,18 @@ func envFloat(key string, defaultVal float64) float64 {
 		return defaultVal
 	}
 	return f
+}
+
+func envDuration(key string, defaultVal time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		return defaultVal
+	}
+	return d
 }
 
 func envSlice(key string, defaultVal []string) []string {

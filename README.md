@@ -297,6 +297,18 @@ Recommended sizing:
 | `JM_API_SHUTDOWN_TIMEOUT` | `30` | Graceful shutdown timeout (seconds) |
 | `JM_API_API_V1_PREFIX` | `/api/v1` | API v1 route prefix |
 
+### Request Timeouts
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_REQUEST_TIMEOUT_DEFAULT` | `30s` | Default timeout for standard API handlers |
+| `JM_API_REQUEST_TIMEOUT_BOT_QUERY` | `10s` | Timeout for `/bots` endpoints |
+| `JM_API_REQUEST_TIMEOUT_WEBHOOK` | `60s` | Timeout for `/webhooks` endpoints |
+| `JM_API_REQUEST_TIMEOUT_AUTH` | `5s` | Timeout for `/auth` endpoints |
+| `JM_API_REQUEST_TIMEOUT_HEALTH` | `2s` | Timeout for health endpoints |
+
+Timed responses return `504 Gateway Timeout` with JSON `{ "error": "Request timed out" }` and include the `X-Request-Timeout` response header.
+
 ### JWT & Sessions
 
 | Variable | Default | Description |
