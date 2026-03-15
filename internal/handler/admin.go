@@ -34,6 +34,11 @@ func (h *AdminHandler) BreakStatus(w http.ResponseWriter, r *http.Request) {
 
 // CircuitBreakerStatus returns the status of all circuit breakers
 func (h *AdminHandler) CircuitBreakerStatus(w http.ResponseWriter, r *http.Request) {
+	if h.webhookService == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "webhook service unavailable"})
+		return
+	}
+
 	states := h.webhookService.GetAllCircuitBreakerStates()
 	metrics := h.webhookService.GetCircuitBreakerMetrics()
 

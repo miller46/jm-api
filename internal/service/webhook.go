@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -25,20 +26,6 @@ import (
 
 const WebhookDeliveryTaskType = "webhook.delivery"
 
-// CircuitBreakerHTTPClient wraps an HTTP client with circuit breaker protection
-type CircuitBreakerHTTPClient struct {
-	client  *http.Client
-	manager *CircuitBreakerManager
-}
-
-// Do executes an HTTP request with circuit breaker protection
-func (c *CircuitBreakerHTTPClient) Do(ctx context.Context, subscriberID string, req *http.Request) (*http.Response, error) {
-	if c.manager == nil {
-		return c.client.Do(req)
-	}
-	return c.manager.DoHTTPRequest(ctx, subscriberID, c.client, req)
-}
-
 type WebhookDeliveryTaskPayload struct {
 	WebhookID string          `json:"webhook_id"`
 	EventType string          `json:"event_type"`
@@ -46,9 +33,9 @@ type WebhookDeliveryTaskPayload struct {
 }
 
 type WebhookService struct {
-	queries           *sqlc.Queries
-	client            *http.Client
-	circuitManager    *CircuitBreakerManager
+	queries               *sqlc.Queries
+	client                *http.Client
+	circuitManager        *CircuitBreakerManager
 	circuitBreakerEnabled bool
 }
 
@@ -234,7 +221,7 @@ func (ws *WebhookService) doDelivery(ctx context.Context, webhookID, targetURL s
 	}
 
 	if err != nil {
-		if err == gobreaker.ErrOpenState {
+		if errors.Is(err, gobreaker.ErrOpenState) {
 			return 0, "", fmt.Errorf("circuit breaker open: %w", err)
 		}
 		return 0, "", err

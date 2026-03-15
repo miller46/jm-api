@@ -458,6 +458,19 @@ If Redis is configured but the connection fails at startup, the server falls bac
 | `JM_API_BOTS_WRITE_ADMIN_ONLY` | `false` | Restrict bot create/update/delete to admin users |
 | `JM_API_I_UNDERSTAND_RISK` | `false` | Set to `true` to allow non-admin bot writes in production |
 
+### Circuit Breaker (Webhook Delivery)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_CIRCUIT_BREAKER_ENABLED` | `true` | Enable per-webhook circuit breaker protection |
+| `JM_API_CIRCUIT_BREAKER_MAX_REQUESTS` | `100` | Max requests allowed while half-open |
+| `JM_API_CIRCUIT_BREAKER_INTERVAL` | `10s` | Rolling stats window for failure counters |
+| `JM_API_CIRCUIT_BREAKER_TIMEOUT` | `30s` | HTTP request timeout for webhook delivery attempts |
+| `JM_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `0.6` | Open circuit when failure rate reaches this ratio |
+| `JM_API_CIRCUIT_BREAKER_MIN_REQUESTS` | `3` | Minimum requests before failure-rate tripping applies |
+| `JM_API_CIRCUIT_BREAKER_CONSECUTIVE_FAILURES` | `5` | Open circuit after this many consecutive failures |
+| `JM_API_CIRCUIT_BREAKER_OPEN_DURATION` | `30s` | How long a circuit stays open before transitioning to half-open |
+
 ## Production Requirements
 
 The server enforces these additional validations when `JM_API_ENVIRONMENT` is `production` or `staging`:

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -15,7 +16,7 @@ import (
 type CircuitBreakerConfig struct {
 	MaxRequests        uint32        // Max requests in half-open state
 	Interval           time.Duration // Statistical window
-	Timeout            time.Duration // Request timeout
+	Timeout            time.Duration // HTTP request timeout
 	FailureThreshold   float64       // Trip circuit at this failure rate (0-1)
 	MinRequests        uint32        // Min requests before tripping
 	ConsecutiveFailure uint32        // Trip after this many consecutive failures
@@ -145,7 +146,7 @@ func (m *CircuitBreakerManager) GetCircuitBreaker(subscriberID string) *gobreake
 		Name:        fmt.Sprintf("webhook-%s", subscriberID),
 		MaxRequests: m.config.MaxRequests,
 		Interval:    m.config.Interval,
-		Timeout:     m.config.Timeout,
+		Timeout:     m.config.OpenDuration,
 		ReadyToTrip: func(counts gobreaker.Counts) bool {
 			// Trip if we've seen enough requests AND (failure rate exceeds threshold OR consecutive failures too high)
 			if counts.Requests < m.config.MinRequests {
@@ -195,16 +196,20 @@ func (m *CircuitBreakerManager) DoHTTPRequest(ctx context.Context, subscriberID 
 	cb := m.GetCircuitBreaker(subscriberID)
 
 	result, err := cb.Execute(func() (interface{}, error) {
+		requestCtx, cancel := context.WithTimeout(ctx, m.config.Timeout)
+		defer cancel()
+
 		// Clone request to avoid issues with body reuse
-		reqCopy := req.Clone(ctx)
+		reqCopy := req.Clone(requestCtx)
 		resp, err := client.Do(reqCopy)
 		if err != nil {
 			return nil, err
 		}
-		// For circuit breaker purposes, treat non-2xx as errors
+		// For circuit breaker purposes, treat 5xx as failures.
 		if resp.StatusCode >= 500 {
-			// Server errors count as failures
-			return resp, fmt.Errorf("server error: %d", resp.StatusCode)
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("server error: %d", resp.StatusCode)
 		}
 		return resp, nil
 	})
