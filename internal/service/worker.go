@@ -8,21 +8,31 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jack/jm-api-go/internal/db/sqlc"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/jack/jm-api-go/internal/db/sqlc"
 )
 
 type TaskHandler func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error)
 
+const maxTaskRetries = 5
+
+type workerQueries interface {
+	PickQueuedTask(ctx context.Context) (sqlc.Task, error)
+	FailTask(ctx context.Context, arg sqlc.FailTaskParams) (sqlc.Task, error)
+	CreateFailedTask(ctx context.Context, arg sqlc.CreateFailedTaskParams) (sqlc.FailedTask, error)
+	CompleteTask(ctx context.Context, arg sqlc.CompleteTaskParams) (sqlc.Task, error)
+	ResetStaleTasks(ctx context.Context) error
+}
+
 type WorkerService struct {
-	queries      *sqlc.Queries
+	queries      workerQueries
 	handlers     map[string]TaskHandler
 	pollInterval time.Duration
 	maxPerPoll   int
 }
 
-func NewWorkerService(q *sqlc.Queries) *WorkerService {
+func NewWorkerService(q workerQueries) *WorkerService {
 	return &WorkerService{
 		queries:      q,
 		handlers:     make(map[string]TaskHandler),
@@ -47,10 +57,7 @@ func (ws *WorkerService) ProcessTask(ctx context.Context) (bool, error) {
 	handler, ok := ws.handlers[task.Type]
 	if !ok {
 		errMsg := fmt.Sprintf("no handler registered for task type: %s", task.Type)
-		if _, failErr := ws.queries.FailTask(ctx, sqlc.FailTaskParams{
-			ID:    task.ID,
-			Error: pgtype.Text{String: errMsg, Valid: true},
-		}); failErr != nil {
+		if failErr := ws.markTaskFailed(ctx, task, errMsg); failErr != nil {
 			slog.Error("failed to mark task as failed", "task_id", task.ID, "error", failErr)
 		}
 		return true, fmt.Errorf("%s", errMsg)
@@ -59,10 +66,7 @@ func (ws *WorkerService) ProcessTask(ctx context.Context) (bool, error) {
 	result, err := handler(ctx, task.Payload)
 	if err != nil {
 		errMsg := err.Error()
-		if _, failErr := ws.queries.FailTask(ctx, sqlc.FailTaskParams{
-			ID:    task.ID,
-			Error: pgtype.Text{String: errMsg, Valid: true},
-		}); failErr != nil {
+		if failErr := ws.markTaskFailed(ctx, task, errMsg); failErr != nil {
 			slog.Error("failed to mark task as failed", "task_id", task.ID, "error", failErr)
 		}
 		slog.Error("task failed", "task_id", task.ID, "type", task.Type, "error", err)
@@ -77,6 +81,34 @@ func (ws *WorkerService) ProcessTask(ctx context.Context) (bool, error) {
 	}
 	slog.Info("task completed", "task_id", task.ID, "type", task.Type)
 	return true, nil
+}
+
+func (ws *WorkerService) markTaskFailed(ctx context.Context, task sqlc.Task, errMsg string) error {
+	updatedTask, err := ws.queries.FailTask(ctx, sqlc.FailTaskParams{
+		ID:    task.ID,
+		Error: pgtype.Text{String: errMsg, Valid: true},
+	})
+	if err != nil {
+		return fmt.Errorf("failing task: %w", err)
+	}
+
+	if updatedTask.RetryCount < maxTaskRetries {
+		return nil
+	}
+
+	if _, err := ws.queries.CreateFailedTask(ctx, sqlc.CreateFailedTaskParams{
+		OriginalTaskID: updatedTask.ID,
+		TaskType:       updatedTask.Type,
+		Payload:        updatedTask.Payload,
+		ErrorMessage:   errMsg,
+		ErrorStack:     pgtype.Text{},
+		AttemptCount:   updatedTask.RetryCount,
+	}); err != nil {
+		return fmt.Errorf("adding task to dead letter queue: %w", err)
+	}
+
+	slog.Error("task moved to dead letter queue", "task_id", updatedTask.ID, "type", updatedTask.Type, "attempt_count", updatedTask.RetryCount)
+	return nil
 }
 
 func (ws *WorkerService) RunForever(ctx context.Context) error {
