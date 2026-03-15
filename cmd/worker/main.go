@@ -37,7 +37,7 @@ func run() error {
 	}
 	defer pool.Close()
 
-	queries := sqlc.New(pool)
+	queries := sqlc.New(sqlc.WithQueryTimeout(pool, cfg.QueryTimeout))
 	worker := service.NewWorkerServiceFromSQLC(pool, queries)
 	worker.Configure(cfg.WorkerMaxConcurrency, cfg.WorkerPollInterval, cfg.WorkerMaxPerPoll, cfg.WorkerTaskTimeout)
 

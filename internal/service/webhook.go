@@ -12,6 +12,7 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -156,6 +157,16 @@ func VerifyWebhookSignature(secret string, payload []byte, providedSignature str
 	return hmac.Equal([]byte(expected), []byte(strings.TrimSpace(providedSignature)))
 }
 
+func retryBackoffWithJitter(attempt int, random float64) time.Duration {
+	if attempt < 1 {
+		return 0
+	}
+
+	base := time.Duration(math.Pow(2, float64(attempt-1))) * time.Second
+	jitterFactor := 0.8 + (random * 0.4)
+	return time.Duration(float64(base) * jitterFactor)
+}
+
 func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook, eventType string, data interface{}) error {
 	event := WebhookEvent{
 		ID:             model.GenerateID(),
@@ -179,7 +190,7 @@ func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
-			backoff := time.Duration(math.Pow(2, float64(attempt-1))) * time.Second
+			backoff := retryBackoffWithJitter(attempt, rand.Float64())
 			select {
 			case <-ctx.Done():
 				return ctx.Err()

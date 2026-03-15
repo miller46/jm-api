@@ -126,6 +126,22 @@ Base path: `/api/v1` (configurable via `JM_API_API_V1_PREFIX`)
 
 **Login rate limit:** 5 requests/minute. **Signup rate limit:** 5 requests/minute.
 
+`/auth/login` and `/auth/signup` use request-body validation middleware driven by struct tags (`required`, `min`, `max`, `email`, etc.). Invalid requests return a consistent payload:
+
+```json
+{
+  "error": "validation_failed",
+  "message": "Request validation failed",
+  "details": [
+    {
+      "field": "password",
+      "rule": "min",
+      "message": "Password must be at least 8 characters"
+    }
+  ]
+}
+```
+
 Login response:
 ```json
 {
