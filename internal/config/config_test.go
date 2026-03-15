@@ -43,6 +43,10 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 60*time.Second, cfg.RequestTimeoutWebhook)
 	assert.Equal(t, 5*time.Second, cfg.RequestTimeoutAuth)
 	assert.Equal(t, 2*time.Second, cfg.RequestTimeoutHealth)
+	assert.Equal(t, 10, cfg.WorkerMaxConcurrency)
+	assert.Equal(t, 10, cfg.WorkerMaxPerPoll)
+	assert.Equal(t, 5*time.Second, cfg.WorkerPollInterval)
+	assert.Equal(t, 30*time.Second, cfg.WorkerTaskTimeout)
 }
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
@@ -155,6 +159,10 @@ func TestLoad_CustomValues(t *testing.T) {
 	setEnv(t, "JM_API_REQUEST_TIMEOUT_DEFAULT", "45s")
 	setEnv(t, "JM_API_DB_POOL_MAX_CONNS", "50")
 	setEnv(t, "JM_API_DB_POOL_MIN_CONNS", "10")
+	setEnv(t, "JM_API_WORKER_MAX_CONCURRENCY", "6")
+	setEnv(t, "JM_API_WORKER_MAX_PER_POLL", "12")
+	setEnv(t, "JM_API_WORKER_POLL_INTERVAL", "2s")
+	setEnv(t, "JM_API_WORKER_TASK_TIMEOUT", "20s")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -165,6 +173,10 @@ func TestLoad_CustomValues(t *testing.T) {
 	assert.Equal(t, 45*time.Second, cfg.RequestTimeoutDefault)
 	assert.Equal(t, 50, cfg.DBPoolMaxConns)
 	assert.Equal(t, 10, cfg.DBPoolMinConns)
+	assert.Equal(t, 6, cfg.WorkerMaxConcurrency)
+	assert.Equal(t, 12, cfg.WorkerMaxPerPoll)
+	assert.Equal(t, 2*time.Second, cfg.WorkerPollInterval)
+	assert.Equal(t, 20*time.Second, cfg.WorkerTaskTimeout)
 }
 
 func TestLoad_DBPoolLegacyEnvKeys(t *testing.T) {
@@ -220,6 +232,15 @@ func TestLoad_CustomDBRetryValues(t *testing.T) {
 	assert.Equal(t, 8, cfg.DBConnectRetryMaxAttempts)
 	assert.Equal(t, 2*time.Second, cfg.DBConnectRetryInitialDelay)
 	assert.Equal(t, 12*time.Second, cfg.DBConnectRetryMaxDelay)
+}
+
+func TestLoad_WorkerValidation_InvalidConcurrency(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_WORKER_MAX_CONCURRENCY", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "worker max concurrency")
 }
 
 func TestIsProd(t *testing.T) {

@@ -39,6 +39,7 @@ func run() error {
 
 	queries := sqlc.New(pool)
 	worker := service.NewWorkerService(queries)
+	worker.Configure(cfg.WorkerMaxConcurrency, cfg.WorkerPollInterval, cfg.WorkerMaxPerPoll, cfg.WorkerTaskTimeout)
 
 	var cbConfig *service.CircuitBreakerConfig
 	if cfg.CircuitBreakerEnabled {

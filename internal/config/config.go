@@ -111,6 +111,12 @@ type Config struct {
 	// Graceful shutdown
 	ShutdownTimeout time.Duration
 
+	// Worker
+	WorkerMaxConcurrency int
+	WorkerMaxPerPoll     int
+	WorkerPollInterval   time.Duration
+	WorkerTaskTimeout    time.Duration
+
 	// Circuit Breaker
 	CircuitBreakerEnabled             bool
 	CircuitBreakerMaxRequests         uint32
@@ -209,6 +215,12 @@ func Load() (*Config, error) {
 
 		ShutdownTimeout: time.Duration(envInt("JM_API_SHUTDOWN_TIMEOUT", 30)) * time.Second,
 
+		// Worker
+		WorkerMaxConcurrency: envInt("JM_API_WORKER_MAX_CONCURRENCY", 10),
+		WorkerMaxPerPoll:     envInt("JM_API_WORKER_MAX_PER_POLL", 10),
+		WorkerPollInterval:   envDuration("JM_API_WORKER_POLL_INTERVAL", 5*time.Second),
+		WorkerTaskTimeout:    envDuration("JM_API_WORKER_TASK_TIMEOUT", 30*time.Second),
+
 		// Circuit Breaker
 		CircuitBreakerEnabled:             envBool("JM_API_CIRCUIT_BREAKER_ENABLED", true),
 		CircuitBreakerMaxRequests:         envUint32("JM_API_CIRCUIT_BREAKER_MAX_REQUESTS", 100),
@@ -283,6 +295,19 @@ func (c *Config) validate() error {
 
 	if c.RequestTimeoutDefault <= 0 || c.RequestTimeoutBotQuery <= 0 || c.RequestTimeoutWebhook <= 0 || c.RequestTimeoutAuth <= 0 || c.RequestTimeoutHealth <= 0 {
 		return fmt.Errorf("request timeouts must be > 0")
+	}
+
+	if c.WorkerMaxConcurrency <= 0 {
+		return fmt.Errorf("worker max concurrency must be > 0")
+	}
+	if c.WorkerMaxPerPoll <= 0 {
+		return fmt.Errorf("worker max per poll must be > 0")
+	}
+	if c.WorkerPollInterval <= 0 {
+		return fmt.Errorf("worker poll interval must be > 0")
+	}
+	if c.WorkerTaskTimeout <= 0 {
+		return fmt.Errorf("worker task timeout must be > 0")
 	}
 
 	// Validate circuit breaker config

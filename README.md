@@ -628,7 +628,14 @@ Generated files in `internal/db/sqlc/` are committed to the repository and must 
 
 ## Background Worker
 
-The worker polls the `tasks` table every 5 seconds for queued tasks, processing up to 10 per poll cycle. It uses a simple handler registry pattern:
+The worker uses a bounded worker pool to process queued tasks with backpressure. Defaults are 10 concurrent tasks, up to 10 submissions per poll cycle, 5s poll interval, and 30s per-task timeout. These are configurable via:
+
+- `JM_API_WORKER_MAX_CONCURRENCY`
+- `JM_API_WORKER_MAX_PER_POLL`
+- `JM_API_WORKER_POLL_INTERVAL`
+- `JM_API_WORKER_TASK_TIMEOUT`
+
+It uses a simple handler registry pattern:
 
 ```go
 worker.RegisterHandler("my-task", func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
