@@ -84,7 +84,7 @@ func TestMarshalWebhookDeliveryTaskPayload(t *testing.T) {
 }
 
 func TestHandleWebhookDeliveryTask_InvalidPayload(t *testing.T) {
-	ws := &WebhookService{}
+	ws := NewWebhookService(nil, nil)
 
 	_, err := ws.HandleWebhookDeliveryTask(context.Background(), json.RawMessage(`{"event_type":"bot.created"}`))
 	require.Error(t, err)

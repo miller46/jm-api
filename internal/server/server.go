@@ -65,7 +65,20 @@ func New(cfg *config.Config) (*Server, error) {
 		cfg.JWTAccessTokenExpireMin,
 		cfg.JWTRefreshTokenExpireDays,
 	)
-	s.webhookSvc = service.NewWebhookService(s.queries)
+
+	var cbConfig *service.CircuitBreakerConfig
+	if cfg.CircuitBreakerEnabled {
+		cbConfig = &service.CircuitBreakerConfig{
+			MaxRequests:        cfg.CircuitBreakerMaxRequests,
+			Interval:           cfg.CircuitBreakerInterval,
+			Timeout:            cfg.CircuitBreakerTimeout,
+			FailureThreshold:   cfg.CircuitBreakerFailureThreshold,
+			MinRequests:        cfg.CircuitBreakerMinRequests,
+			ConsecutiveFailure: cfg.CircuitBreakerConsecutiveFailures,
+			OpenDuration:       cfg.CircuitBreakerOpenDuration,
+		}
+	}
+	s.webhookSvc = service.NewWebhookService(s.queries, cbConfig)
 
 	s.setupRoutes()
 
@@ -172,7 +185,7 @@ func (s *Server) setupRoutes() {
 	}
 	healthH := handler.NewHealthHandler(s.db, healthOpts...)
 	authH := handler.NewAuthHandler(s.authService)
-	adminH := handler.NewAdminHandler(healthH)
+	adminH := handler.NewAdminHandler(healthH, s.webhookSvc)
 	metaH := handler.NewMetaHandler(cfg)
 	botH := handler.NewBotHandler(s.queries, s.webhookSvc)
 	webhookH := handler.NewWebhookHandler(s.queries, s.webhookSvc)
@@ -223,6 +236,7 @@ func (s *Server) setupRoutes() {
 			r.Post("/break", adminH.TriggerBreak)
 			r.Post("/break/reset", adminH.ResetBreak)
 			r.Get("/break/status", adminH.BreakStatus)
+			r.Get("/circuit-breakers", adminH.CircuitBreakerStatus)
 		})
 
 		// Bots - reads are public

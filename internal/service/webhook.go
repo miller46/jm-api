@@ -20,9 +20,24 @@ import (
 	"github.com/jack/jm-api-go/internal/db/sqlc"
 	"github.com/jack/jm-api-go/internal/model"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/sony/gobreaker"
 )
 
 const WebhookDeliveryTaskType = "webhook.delivery"
+
+// CircuitBreakerHTTPClient wraps an HTTP client with circuit breaker protection
+type CircuitBreakerHTTPClient struct {
+	client  *http.Client
+	manager *CircuitBreakerManager
+}
+
+// Do executes an HTTP request with circuit breaker protection
+func (c *CircuitBreakerHTTPClient) Do(ctx context.Context, subscriberID string, req *http.Request) (*http.Response, error) {
+	if c.manager == nil {
+		return c.client.Do(req)
+	}
+	return c.manager.DoHTTPRequest(ctx, subscriberID, c.client, req)
+}
 
 type WebhookDeliveryTaskPayload struct {
 	WebhookID string          `json:"webhook_id"`
@@ -31,11 +46,13 @@ type WebhookDeliveryTaskPayload struct {
 }
 
 type WebhookService struct {
-	queries *sqlc.Queries
-	client  *http.Client
+	queries           *sqlc.Queries
+	client            *http.Client
+	circuitManager    *CircuitBreakerManager
+	circuitBreakerEnabled bool
 }
 
-func NewWebhookService(q *sqlc.Queries) *WebhookService {
+func NewWebhookService(q *sqlc.Queries, cbConfig *CircuitBreakerConfig) *WebhookService {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -56,13 +73,21 @@ func NewWebhookService(q *sqlc.Queries) *WebhookService {
 			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 		},
 	}
-	return &WebhookService{
+
+	svc := &WebhookService{
 		queries: q,
 		client: &http.Client{
 			Timeout:   10 * time.Second,
 			Transport: transport,
 		},
+		circuitBreakerEnabled: cbConfig != nil,
 	}
+
+	if cbConfig != nil {
+		svc.circuitManager = NewCircuitBreakerManager(*cbConfig)
+	}
+
+	return svc
 }
 
 type WebhookEvent struct {
@@ -166,7 +191,7 @@ func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook
 			}
 		}
 
-		statusCode, responseBody, lastErr = ws.doDelivery(ctx, webhook.TargetUrl, payload, signature, eventType, event.ID)
+		statusCode, responseBody, lastErr = ws.doDelivery(ctx, webhook.ID, webhook.TargetUrl, payload, signature, eventType, event.ID)
 
 		if lastErr == nil && statusCode >= 200 && statusCode < 300 {
 			ws.logDelivery(ctx, webhook.ID, event.ID, eventType, true, attempt, &statusCode, responseBody, "")
@@ -190,7 +215,7 @@ func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook
 	return fmt.Errorf("webhook delivery failed after %d attempts: %v", maxAttempts, lastErr)
 }
 
-func (ws *WebhookService) doDelivery(ctx context.Context, targetURL string, payload []byte, signature, eventType, eventID string) (int, string, error) {
+func (ws *WebhookService) doDelivery(ctx context.Context, webhookID, targetURL string, payload []byte, signature, eventType, eventID string) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(payload))
 	if err != nil {
 		return 0, "", err
@@ -201,8 +226,17 @@ func (ws *WebhookService) doDelivery(ctx context.Context, targetURL string, payl
 	req.Header.Set("X-Webhook-Event", eventType)
 	req.Header.Set("X-Webhook-Delivery", eventID)
 
-	resp, err := ws.client.Do(req)
+	var resp *http.Response
+	if ws.circuitBreakerEnabled && ws.circuitManager != nil {
+		resp, err = ws.circuitManager.DoHTTPRequest(ctx, webhookID, ws.client, req)
+	} else {
+		resp, err = ws.client.Do(req)
+	}
+
 	if err != nil {
+		if err == gobreaker.ErrOpenState {
+			return 0, "", fmt.Errorf("circuit breaker open: %w", err)
+		}
 		return 0, "", err
 	}
 	defer resp.Body.Close()
@@ -296,6 +330,37 @@ func marshalWebhookDeliveryTaskPayload(webhookID, eventType string, data interfa
 	}
 
 	return payload, nil
+}
+
+// GetCircuitBreakerState returns the circuit breaker state for a webhook
+func (ws *WebhookService) GetCircuitBreakerState(webhookID string) CircuitState {
+	if ws.circuitManager == nil {
+		return CircuitClosed
+	}
+	return ws.circuitManager.GetState(webhookID)
+}
+
+// GetAllCircuitBreakerStates returns all circuit breaker states
+func (ws *WebhookService) GetAllCircuitBreakerStates() map[string]CircuitState {
+	if ws.circuitManager == nil {
+		return make(map[string]CircuitState)
+	}
+	return ws.circuitManager.GetAllStates()
+}
+
+// GetCircuitBreakerMetrics returns circuit breaker metrics
+func (ws *WebhookService) GetCircuitBreakerMetrics() map[string]interface{} {
+	if ws.circuitManager == nil {
+		return map[string]interface{}{}
+	}
+	return ws.circuitManager.GetMetrics()
+}
+
+// ResetCircuitBreaker resets a circuit breaker for a specific webhook
+func (ws *WebhookService) ResetCircuitBreaker(webhookID string) {
+	if ws.circuitManager != nil {
+		ws.circuitManager.Reset(webhookID)
+	}
 }
 
 func (ws *WebhookService) HandleWebhookDeliveryTask(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {

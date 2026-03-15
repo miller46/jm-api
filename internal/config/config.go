@@ -110,6 +110,16 @@ type Config struct {
 
 	// Graceful shutdown
 	ShutdownTimeout time.Duration
+
+	// Circuit Breaker
+	CircuitBreakerEnabled             bool
+	CircuitBreakerMaxRequests         uint32
+	CircuitBreakerInterval            time.Duration
+	CircuitBreakerTimeout             time.Duration
+	CircuitBreakerFailureThreshold    float64
+	CircuitBreakerMinRequests         uint32
+	CircuitBreakerConsecutiveFailures uint32
+	CircuitBreakerOpenDuration        time.Duration
 }
 
 func Load() (*Config, error) {
@@ -198,6 +208,16 @@ func Load() (*Config, error) {
 		RequestTimeoutHealth:   envDuration("JM_API_REQUEST_TIMEOUT_HEALTH", 2*time.Second),
 
 		ShutdownTimeout: time.Duration(envInt("JM_API_SHUTDOWN_TIMEOUT", 30)) * time.Second,
+
+		// Circuit Breaker
+		CircuitBreakerEnabled:             envBool("JM_API_CIRCUIT_BREAKER_ENABLED", true),
+		CircuitBreakerMaxRequests:         envUint32("JM_API_CIRCUIT_BREAKER_MAX_REQUESTS", 100),
+		CircuitBreakerInterval:            envDuration("JM_API_CIRCUIT_BREAKER_INTERVAL", 10*time.Second),
+		CircuitBreakerTimeout:             envDuration("JM_API_CIRCUIT_BREAKER_TIMEOUT", 30*time.Second),
+		CircuitBreakerFailureThreshold:    envFloat("JM_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD", 0.6),
+		CircuitBreakerMinRequests:         envUint32("JM_API_CIRCUIT_BREAKER_MIN_REQUESTS", 3),
+		CircuitBreakerConsecutiveFailures: envUint32("JM_API_CIRCUIT_BREAKER_CONSECUTIVE_FAILURES", 5),
+		CircuitBreakerOpenDuration:        envDuration("JM_API_CIRCUIT_BREAKER_OPEN_DURATION", 30*time.Second),
 	}
 
 	// Parse JWT signing keys (supports rotation)
@@ -265,6 +285,22 @@ func (c *Config) validate() error {
 		return fmt.Errorf("request timeouts must be > 0")
 	}
 
+	// Validate circuit breaker config
+	if c.CircuitBreakerEnabled {
+		if c.CircuitBreakerMaxRequests == 0 {
+			return fmt.Errorf("circuit breaker max requests must be > 0")
+		}
+		if c.CircuitBreakerFailureThreshold <= 0 || c.CircuitBreakerFailureThreshold > 1 {
+			return fmt.Errorf("circuit breaker failure threshold must be between 0 and 1")
+		}
+		if c.CircuitBreakerMinRequests == 0 {
+			return fmt.Errorf("circuit breaker min requests must be > 0")
+		}
+		if c.CircuitBreakerOpenDuration <= 0 {
+			return fmt.Errorf("circuit breaker open duration must be > 0")
+		}
+	}
+
 	isProd := c.Environment == "production" || c.Environment == "staging"
 	if isProd {
 		if len(c.JWTSecretKey) < 32 {
@@ -330,6 +366,18 @@ func envIntFromKeys(keys []string, defaultVal int) int {
 		}
 	}
 	return defaultVal
+}
+
+func envUint32(key string, defaultVal uint32) uint32 {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultVal
+	}
+	i, err := strconv.ParseUint(v, 10, 32)
+	if err != nil {
+		return defaultVal
+	}
+	return uint32(i)
 }
 
 func envFloat(key string, defaultVal float64) float64 {
