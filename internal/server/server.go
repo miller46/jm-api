@@ -57,7 +57,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Setup services
-	s.queries = sqlc.New(s.db)
+	s.queries = sqlc.New(sqlc.WithQueryTimeout(s.db, cfg.QueryTimeout))
 	s.authService = service.NewAuthService(
 		s.queries,
 		cfg.JWTSigningKeys,

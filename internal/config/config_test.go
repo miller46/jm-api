@@ -38,6 +38,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 5, cfg.DBConnectRetryMaxAttempts)
 	assert.Equal(t, time.Second, cfg.DBConnectRetryInitialDelay)
 	assert.Equal(t, 30*time.Second, cfg.DBConnectRetryMaxDelay)
+	assert.Equal(t, 3*time.Second, cfg.QueryTimeout)
 	assert.Equal(t, 30*time.Second, cfg.RequestTimeoutDefault)
 	assert.Equal(t, 10*time.Second, cfg.RequestTimeoutBotQuery)
 	assert.Equal(t, 60*time.Second, cfg.RequestTimeoutWebhook)
@@ -163,6 +164,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	setEnv(t, "JM_API_WORKER_MAX_PER_POLL", "12")
 	setEnv(t, "JM_API_WORKER_POLL_INTERVAL", "2s")
 	setEnv(t, "JM_API_WORKER_TASK_TIMEOUT", "20s")
+	setEnv(t, "JM_API_DB_QUERY_TIMEOUT", "7s")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -177,6 +179,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	assert.Equal(t, 12, cfg.WorkerMaxPerPoll)
 	assert.Equal(t, 2*time.Second, cfg.WorkerPollInterval)
 	assert.Equal(t, 20*time.Second, cfg.WorkerTaskTimeout)
+	assert.Equal(t, 7*time.Second, cfg.QueryTimeout)
 }
 
 func TestLoad_DBPoolLegacyEnvKeys(t *testing.T) {
@@ -232,6 +235,15 @@ func TestLoad_CustomDBRetryValues(t *testing.T) {
 	assert.Equal(t, 8, cfg.DBConnectRetryMaxAttempts)
 	assert.Equal(t, 2*time.Second, cfg.DBConnectRetryInitialDelay)
 	assert.Equal(t, 12*time.Second, cfg.DBConnectRetryMaxDelay)
+}
+
+func TestLoad_InvalidQueryTimeout(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_QUERY_TIMEOUT", "0s")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JM_API_DB_QUERY_TIMEOUT")
 }
 
 func TestLoad_WorkerValidation_InvalidConcurrency(t *testing.T) {

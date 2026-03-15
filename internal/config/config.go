@@ -24,6 +24,7 @@ type Config struct {
 	DBConnectRetryMaxAttempts  int
 	DBConnectRetryInitialDelay time.Duration
 	DBConnectRetryMaxDelay     time.Duration
+	QueryTimeout               time.Duration
 
 	APIV1Prefix string
 
@@ -144,6 +145,7 @@ func Load() (*Config, error) {
 		DBConnectRetryMaxAttempts:  envInt("JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS", 5),
 		DBConnectRetryInitialDelay: time.Duration(envInt("JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS", 1)) * time.Second,
 		DBConnectRetryMaxDelay:     time.Duration(envInt("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS", 30)) * time.Second,
+		QueryTimeout:               envDuration("JM_API_DB_QUERY_TIMEOUT", 3*time.Second),
 
 		APIV1Prefix: envOrDefault("JM_API_API_V1_PREFIX", "/api/v1"),
 
@@ -277,6 +279,9 @@ func (c *Config) validate() error {
 	}
 	if c.DBConnectRetryMaxDelay < c.DBConnectRetryInitialDelay {
 		return fmt.Errorf("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS must be >= JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS")
+	}
+	if c.QueryTimeout <= 0 {
+		return fmt.Errorf("JM_API_DB_QUERY_TIMEOUT must be > 0")
 	}
 
 	if c.RequestTimeoutDefault <= 0 || c.RequestTimeoutBotQuery <= 0 || c.RequestTimeoutWebhook <= 0 || c.RequestTimeoutAuth <= 0 || c.RequestTimeoutHealth <= 0 {
