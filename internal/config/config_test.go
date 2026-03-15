@@ -232,3 +232,99 @@ func TestIsProd(t *testing.T) {
 	c.Environment = "development"
 	assert.False(t, c.IsProd())
 }
+
+func TestLoad_CircuitBreakerDefaults(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.True(t, cfg.CircuitBreakerEnabled)
+	assert.Equal(t, uint32(100), cfg.CircuitBreakerMaxRequests)
+	assert.Equal(t, 10*time.Second, cfg.CircuitBreakerInterval)
+	assert.Equal(t, 30*time.Second, cfg.CircuitBreakerTimeout)
+	assert.Equal(t, 0.6, cfg.CircuitBreakerFailureThreshold)
+	assert.Equal(t, uint32(3), cfg.CircuitBreakerMinRequests)
+	assert.Equal(t, uint32(5), cfg.CircuitBreakerConsecutiveFailures)
+	assert.Equal(t, 30*time.Second, cfg.CircuitBreakerOpenDuration)
+}
+
+func TestLoad_CircuitBreakerCustomValues(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_ENABLED", "false")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MAX_REQUESTS", "50")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_INTERVAL", "5s")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_TIMEOUT", "15s")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "0.8")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MIN_REQUESTS", "5")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_CONSECUTIVE_FAILURES", "10")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_OPEN_DURATION", "60s")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.False(t, cfg.CircuitBreakerEnabled)
+	assert.Equal(t, uint32(50), cfg.CircuitBreakerMaxRequests)
+	assert.Equal(t, 5*time.Second, cfg.CircuitBreakerInterval)
+	assert.Equal(t, 15*time.Second, cfg.CircuitBreakerTimeout)
+	assert.Equal(t, 0.8, cfg.CircuitBreakerFailureThreshold)
+	assert.Equal(t, uint32(5), cfg.CircuitBreakerMinRequests)
+	assert.Equal(t, uint32(10), cfg.CircuitBreakerConsecutiveFailures)
+	assert.Equal(t, 60*time.Second, cfg.CircuitBreakerOpenDuration)
+}
+
+func TestLoad_CircuitBreakerValidation_InvalidMaxRequests(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MAX_REQUESTS", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker max requests")
+}
+
+func TestLoad_CircuitBreakerValidation_InvalidFailureThreshold(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1.5")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker failure threshold")
+}
+
+func TestLoad_CircuitBreakerValidation_ZeroFailureThreshold(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker failure threshold")
+}
+
+func TestLoad_CircuitBreakerValidation_InvalidMinRequests(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MIN_REQUESTS", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker min requests")
+}
+
+func TestLoad_CircuitBreakerValidation_InvalidOpenDuration(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_OPEN_DURATION", "0s")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker open duration")
+}
+
+func TestLoad_CircuitBreakerDisabled_NoValidation(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_ENABLED", "false")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MAX_REQUESTS", "0")
+
+	// Should not validate when disabled
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.CircuitBreakerEnabled)
+}

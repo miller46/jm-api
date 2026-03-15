@@ -39,7 +39,20 @@ func run() error {
 
 	queries := sqlc.New(pool)
 	worker := service.NewWorkerService(queries)
-	webhookSvc := service.NewWebhookService(queries)
+
+	var cbConfig *service.CircuitBreakerConfig
+	if cfg.CircuitBreakerEnabled {
+		cbConfig = &service.CircuitBreakerConfig{
+			MaxRequests:        cfg.CircuitBreakerMaxRequests,
+			Interval:           cfg.CircuitBreakerInterval,
+			Timeout:            cfg.CircuitBreakerTimeout,
+			FailureThreshold:   cfg.CircuitBreakerFailureThreshold,
+			MinRequests:        cfg.CircuitBreakerMinRequests,
+			ConsecutiveFailure: cfg.CircuitBreakerConsecutiveFailures,
+			OpenDuration:       cfg.CircuitBreakerOpenDuration,
+		}
+	}
+	webhookSvc := service.NewWebhookService(queries, cbConfig)
 
 	// Register task handlers
 	worker.RegisterHandler("echo", func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
