@@ -3,8 +3,10 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -93,4 +95,57 @@ func TestHandleWebhookDeliveryTask_InvalidPayload(t *testing.T) {
 	_, err = ws.HandleWebhookDeliveryTask(context.Background(), json.RawMessage(`{"webhook_id":"wh_123"}`))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "event_type is required")
+}
+
+func TestRetryBackoffWithJitter_Bounds(t *testing.T) {
+	testCases := []struct {
+		name    string
+		attempt int
+		base    time.Duration
+	}{
+		{name: "attempt-1", attempt: 1, base: 1 * time.Second},
+		{name: "attempt-2", attempt: 2, base: 2 * time.Second},
+		{name: "attempt-3", attempt: 3, base: 4 * time.Second},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			minExpected := time.Duration(float64(tc.base) * 0.8)
+			maxExpected := time.Duration(float64(tc.base) * 1.2)
+
+			gotMin := retryBackoffWithJitter(tc.attempt, 0.0)
+			gotMax := retryBackoffWithJitter(tc.attempt, 1.0)
+
+			assert.Equal(t, minExpected, gotMin)
+			assert.Equal(t, maxExpected, gotMax)
+		})
+	}
+}
+
+func TestRetryBackoffWithJitter_Distribution(t *testing.T) {
+	const samples = 1000
+	const attempt = 4 // base = 8s
+
+	base := time.Duration(math.Pow(2, float64(attempt-1))) * time.Second
+	minExpected := time.Duration(float64(base) * 0.8)
+	maxExpected := time.Duration(float64(base) * 1.2)
+
+	var sum time.Duration
+	seen := make(map[time.Duration]struct{})
+
+	for i := 0; i < samples; i++ {
+		random := float64(i) / float64(samples-1)
+		d := retryBackoffWithJitter(attempt, random)
+
+		assert.GreaterOrEqual(t, d, minExpected)
+		assert.LessOrEqual(t, d, maxExpected)
+
+		sum += d
+		seen[d] = struct{}{}
+	}
+
+	average := time.Duration(int64(sum) / samples)
+	delta := time.Duration(float64(base) * 0.01) // 1%
+	assert.InDelta(t, float64(base), float64(average), float64(delta))
+	assert.Greater(t, len(seen), 100, "jitter should produce a broad range of delay values")
 }
