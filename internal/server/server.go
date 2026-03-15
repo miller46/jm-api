@@ -16,6 +16,7 @@ import (
 
 	"github.com/jack/jm-api-go/internal/config"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
+	"github.com/jack/jm-api-go/internal/dbconn"
 	"github.com/jack/jm-api-go/internal/handler"
 	"github.com/jack/jm-api-go/internal/middleware"
 	"github.com/jack/jm-api-go/internal/observability"
@@ -46,7 +47,7 @@ func New(cfg *config.Config) (*Server, error) {
 	observability.SetupLogging(cfg.LogLevel, cfg.LogJSON, cfg.LogSampleRate)
 
 	// Setup database
-	if err := s.setupDB(cfg); err != nil {
+	if err := s.setupDB(); err != nil {
 		return nil, fmt.Errorf("setting up database: %w", err)
 	}
 
@@ -75,25 +76,14 @@ func New(cfg *config.Config) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) setupDB(cfg *config.Config) error {
-	poolConfig, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+func (s *Server) setupDB() error {
+	pool, err := dbconn.ConnectWithRetry(context.Background(), s.cfg)
 	if err != nil {
-		return fmt.Errorf("parsing database URL: %w", err)
-	}
-	poolConfig.MaxConns = int32(cfg.DBPoolMaxConns)
-	poolConfig.MinConns = int32(cfg.DBPoolMinConns)
-
-	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
-	if err != nil {
-		return fmt.Errorf("creating connection pool: %w", err)
-	}
-
-	if err := pool.Ping(context.Background()); err != nil {
-		return fmt.Errorf("pinging database: %w", err)
+		return err
 	}
 
 	s.db = pool
-	slog.Info("database connected", "db_pool_max_conns", cfg.DBPoolMaxConns, "db_pool_min_conns", cfg.DBPoolMinConns)
+	slog.Info("database connected", "db_pool_max_conns", s.cfg.DBPoolMaxConns, "db_pool_min_conns", s.cfg.DBPoolMinConns)
 	return nil
 }
 

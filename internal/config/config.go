@@ -15,11 +15,15 @@ type Config struct {
 	Environment string
 	Debug       bool
 
-	DatabaseURL             string
-	DBMigrationCheckEnabled bool
-	DBExpectedMigration     int
-	DBPoolMaxConns          int
-	DBPoolMinConns          int
+	DatabaseURL                string
+	DBMigrationCheckEnabled    bool
+	DBExpectedMigration        int
+	DBPoolMaxConns             int
+	DBPoolMinConns             int
+	DBConnectRetryEnabled      bool
+	DBConnectRetryMaxAttempts  int
+	DBConnectRetryInitialDelay time.Duration
+	DBConnectRetryMaxDelay     time.Duration
 
 	APIV1Prefix string
 
@@ -115,11 +119,15 @@ func Load() (*Config, error) {
 		Environment: envOrDefault("JM_API_ENVIRONMENT", "development"),
 		Debug:       envBool("JM_API_DEBUG", false),
 
-		DatabaseURL:             os.Getenv("JM_API_DATABASE_URL"),
-		DBMigrationCheckEnabled: envBool("JM_API_DB_MIGRATION_CHECK_ENABLED", true),
-		DBExpectedMigration:     envInt("JM_API_DB_EXPECTED_MIGRATION", 1),
-		DBPoolMaxConns:          envIntFromKeys([]string{"JM_API_DB_POOL_MAX_CONNS", "DB_POOL_MAX_CONNS"}, 20),
-		DBPoolMinConns:          envIntFromKeys([]string{"JM_API_DB_POOL_MIN_CONNS", "DB_POOL_MIN_CONNS"}, 2),
+		DatabaseURL:                os.Getenv("JM_API_DATABASE_URL"),
+		DBMigrationCheckEnabled:    envBool("JM_API_DB_MIGRATION_CHECK_ENABLED", true),
+		DBExpectedMigration:        envInt("JM_API_DB_EXPECTED_MIGRATION", 1),
+		DBPoolMaxConns:             envIntFromKeys([]string{"JM_API_DB_POOL_MAX_CONNS", "DB_POOL_MAX_CONNS"}, 20),
+		DBPoolMinConns:             envIntFromKeys([]string{"JM_API_DB_POOL_MIN_CONNS", "DB_POOL_MIN_CONNS"}, 2),
+		DBConnectRetryEnabled:      envBool("JM_API_DB_CONNECT_RETRY_ENABLED", true),
+		DBConnectRetryMaxAttempts:  envInt("JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS", 5),
+		DBConnectRetryInitialDelay: time.Duration(envInt("JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS", 1)) * time.Second,
+		DBConnectRetryMaxDelay:     time.Duration(envInt("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS", 30)) * time.Second,
 
 		APIV1Prefix: envOrDefault("JM_API_API_V1_PREFIX", "/api/v1"),
 
@@ -226,6 +234,18 @@ func (c *Config) validate() error {
 	if c.LogSampleRate <= 0 || c.LogSampleRate > 1 {
 		return fmt.Errorf("JM_API_LOG_SAMPLE_RATE must be > 0 and <= 1")
 	}
+	if c.DBConnectRetryMaxAttempts <= 0 {
+		return fmt.Errorf("JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS must be > 0")
+	}
+	if c.DBConnectRetryInitialDelay <= 0 {
+		return fmt.Errorf("JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS must be > 0")
+	}
+	if c.DBConnectRetryMaxDelay <= 0 {
+		return fmt.Errorf("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS must be > 0")
+	}
+	if c.DBConnectRetryMaxDelay < c.DBConnectRetryInitialDelay {
+		return fmt.Errorf("JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS must be >= JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS")
+	}
 
 	if c.RequestTimeoutDefault <= 0 || c.RequestTimeoutBotQuery <= 0 || c.RequestTimeoutWebhook <= 0 || c.RequestTimeoutAuth <= 0 || c.RequestTimeoutHealth <= 0 {
 		return fmt.Errorf("request timeouts must be > 0")
@@ -239,6 +259,10 @@ func (c *Config) validate() error {
 	}
 	if c.DBPoolMinConns > c.DBPoolMaxConns {
 		return fmt.Errorf("DB pool min connections (%d) cannot exceed max (%d)", c.DBPoolMinConns, c.DBPoolMaxConns)
+	}
+
+	if c.RequestTimeoutDefault <= 0 || c.RequestTimeoutBotQuery <= 0 || c.RequestTimeoutWebhook <= 0 || c.RequestTimeoutAuth <= 0 || c.RequestTimeoutHealth <= 0 {
+		return fmt.Errorf("request timeouts must be > 0")
 	}
 
 	isProd := c.Environment == "production" || c.Environment == "staging"
