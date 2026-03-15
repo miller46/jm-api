@@ -35,7 +35,19 @@ var (
 		},
 		[]string{"service", "version", "method", "endpoint", "status"},
 	)
+
+	httpRequestTimeouts = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_request_timeouts_total",
+			Help: "Total number of HTTP request timeouts",
+		},
+		[]string{"method", "endpoint"},
+	)
 )
+
+func RecordRequestTimeout(method, endpoint string) {
+	httpRequestTimeouts.WithLabelValues(method, endpoint).Inc()
+}
 
 func MetricsMiddleware(service, version string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

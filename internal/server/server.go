@@ -183,18 +183,23 @@ func (s *Server) setupRoutes() {
 
 	r.Route(cfg.APIV1Prefix, func(r chi.Router) {
 		r.Use(rateLimiter.Middleware)
+		r.Use(middleware.RequestTimeout(cfg.RequestTimeoutDefault))
 
 		// Public health endpoints
-		r.Get("/live", healthH.Live)
-		r.Get("/health", healthH.Health)
-		r.Get("/ready", healthH.Ready)
-		r.Get("/healthz", healthH.Healthz)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequestTimeout(cfg.RequestTimeoutHealth))
+			r.Get("/live", healthH.Live)
+			r.Get("/health", healthH.Health)
+			r.Get("/ready", healthH.Ready)
+			r.Get("/healthz", healthH.Healthz)
+		})
 
 		// CSRF middleware for all mutating routes
 		csrfMW := middleware.CSRF
 
 		// Auth routes (mostly public)
 		r.Route("/auth", func(r chi.Router) {
+			r.Use(middleware.RequestTimeout(cfg.RequestTimeoutAuth))
 			r.Post("/login", authH.Login)
 			r.Post("/signup", authH.Signup)
 			r.Post("/refresh", authH.Refresh)
@@ -222,6 +227,7 @@ func (s *Server) setupRoutes() {
 
 		// Bots - reads are public
 		r.Route("/bots", func(r chi.Router) {
+			r.Use(middleware.RequestTimeout(cfg.RequestTimeoutBotQuery))
 			r.Get("/", botH.List)
 			r.Get("/{id}", botH.Get)
 
@@ -243,6 +249,7 @@ func (s *Server) setupRoutes() {
 			r.Use(csrfMW)
 
 			r.Route("/webhooks", func(r chi.Router) {
+				r.Use(middleware.RequestTimeout(cfg.RequestTimeoutWebhook))
 				r.Post("/", webhookH.Create)
 				r.Get("/", webhookH.List)
 				r.Patch("/{id}", webhookH.Update)
@@ -258,10 +265,13 @@ func (s *Server) setupRoutes() {
 	})
 
 	// Root-level health routes (legacy compat)
-	r.Get("/live", healthH.Live)
-	r.Get("/health", healthH.Health)
-	r.Get("/ready", healthH.Ready)
-	r.Get("/healthz", healthH.Healthz)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequestTimeout(cfg.RequestTimeoutHealth))
+		r.Get("/live", healthH.Live)
+		r.Get("/health", healthH.Health)
+		r.Get("/ready", healthH.Ready)
+		r.Get("/healthz", healthH.Healthz)
+	})
 
 	// Static admin dashboard
 	staticFS, err := fs.Sub(static.Files, ".")
@@ -274,9 +284,12 @@ func (s *Server) setupRoutes() {
 
 	// Outside v1 prefix
 	tablesH := handler.NewTablesHandler()
-	r.Get("/api/tables", tablesH.List)
-	r.Get("/api/schema", tablesH.Schema)
-	r.Get("/api/meta", metaH.Meta)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequestTimeout(cfg.RequestTimeoutDefault))
+		r.Get("/api/tables", tablesH.List)
+		r.Get("/api/schema", tablesH.Schema)
+		r.Get("/api/meta", metaH.Meta)
+	})
 	r.Handle(cfg.MetricsPath, promhttp.Handler())
 }
 
