@@ -211,6 +211,8 @@ func (s *Server) setupRoutes() {
 		// CSRF middleware for all mutating routes
 		csrfMW := middleware.CSRF
 
+		r.With(middleware.RequestTimeout(cfg.RequestTimeoutWebhook)).Post("/webhooks/verify", webhookH.Verify)
+
 		// Auth routes (mostly public)
 		r.Route("/auth", func(r chi.Router) {
 			r.Use(middleware.RequestTimeout(cfg.RequestTimeoutAuth))

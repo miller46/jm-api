@@ -148,6 +148,15 @@ func signPayload(secret string, payload []byte) string {
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
+func SignWebhookPayload(secret string, payload []byte) string {
+	return signPayload(secret, payload)
+}
+
+func VerifyWebhookSignature(secret string, payload []byte, providedSignature string) bool {
+	expected := signPayload(secret, payload)
+	return hmac.Equal([]byte(expected), []byte(strings.TrimSpace(providedSignature)))
+}
+
 func retryBackoffWithJitter(attempt int, random float64) time.Duration {
 	if attempt < 1 {
 		return 0

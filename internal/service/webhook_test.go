@@ -71,6 +71,17 @@ func TestSignPayload(t *testing.T) {
 	assert.Contains(t, sig1, "sha256=")
 }
 
+func TestVerifyWebhookSignature(t *testing.T) {
+	payload := []byte(`{"id":"evt_1","type":"bot.created"}`)
+	secret := "supersecret"
+	signature := SignWebhookPayload(secret, payload)
+
+	assert.True(t, VerifyWebhookSignature(secret, payload, signature))
+	assert.False(t, VerifyWebhookSignature("wrong-secret", payload, signature))
+	assert.False(t, VerifyWebhookSignature(secret, []byte(`{"id":"evt_2"}`), signature))
+	assert.False(t, VerifyWebhookSignature(secret, payload, "sha256=bad"))
+}
+
 func TestMarshalWebhookDeliveryTaskPayload(t *testing.T) {
 	payload, err := marshalWebhookDeliveryTaskPayload("wh_123", "bot.created", map[string]interface{}{"id": "bot_1"})
 	require.NoError(t, err)
