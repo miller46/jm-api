@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -31,6 +32,8 @@ type Server struct {
 	router        chi.Router
 	db            *pgxpool.Pool
 	redis         *redis.Client
+	redisLastErr  error
+	redisFailures uint64
 	shutdownGuard *middleware.ShutdownGuard
 	queries       *sqlc.Queries
 	authService   *service.AuthService
@@ -114,11 +117,45 @@ func (s *Server) setupRedis(cfg *config.Config) {
 		ReadTimeout:  time.Duration(cfg.RedisSocketTimeout) * time.Second,
 	})
 	if err := s.redis.Ping(context.Background()).Err(); err != nil {
-		slog.Warn("redis connection failed, falling back to in-memory", "error", err)
+		s.redisLastErr = err
+		s.redisFailures++
+		observability.RecordRedisConnectionFailure("startup")
+		slog.Error("redis.connection.failed",
+			"timestamp", time.Now().UTC().Format(time.RFC3339Nano),
+			"error", err.Error(),
+			"retry_count", s.redisFailures,
+			"required", cfg.RedisRequired,
+		)
 		s.redis = nil
 	} else {
+		s.redisLastErr = nil
 		slog.Info("redis connected")
 	}
+}
+
+func (s *Server) redisHealthCheck(ctx context.Context) error {
+	if s.redis == nil {
+		if s.redisLastErr != nil {
+			return s.redisLastErr
+		}
+		return errors.New("redis not configured")
+	}
+
+	if err := s.redis.Ping(ctx).Err(); err != nil {
+		s.redisLastErr = err
+		s.redisFailures++
+		observability.RecordRedisConnectionFailure("healthcheck")
+		slog.Error("redis.connection.failed",
+			"timestamp", time.Now().UTC().Format(time.RFC3339Nano),
+			"error", err.Error(),
+			"retry_count", s.redisFailures,
+			"required", s.cfg.RedisRequired,
+		)
+		return err
+	}
+
+	s.redisLastErr = nil
+	return nil
 }
 
 func (s *Server) Router() chi.Router {
@@ -208,6 +245,9 @@ func (s *Server) setupRoutes() {
 	var healthOpts []handler.HealthOption
 	if cfg.DBMigrationCheckEnabled {
 		healthOpts = append(healthOpts, handler.WithMigrationCheck(cfg.DBExpectedMigration))
+	}
+	if cfg.RedisURL != "" || cfg.RedisRequired {
+		healthOpts = append(healthOpts, handler.WithRedisCheck(s.redisHealthCheck, cfg.RedisRequired))
 	}
 	healthH := handler.NewHealthHandler(s.db, healthOpts...)
 	authH := handler.NewAuthHandler(s.authService)

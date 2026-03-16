@@ -97,6 +97,7 @@ type Config struct {
 	RedisConnectTimeout      int
 	RedisRetryOnTimeout      bool
 	RedisHealthCheckInterval int
+	RedisRequired            bool
 
 	// Server
 	ServerPort int
@@ -205,6 +206,7 @@ func Load() (*Config, error) {
 		RedisConnectTimeout:      envInt("JM_API_REDIS_SOCKET_CONNECT_TIMEOUT", 5),
 		RedisRetryOnTimeout:      envBool("JM_API_REDIS_RETRY_ON_TIMEOUT", true),
 		RedisHealthCheckInterval: envInt("JM_API_REDIS_HEALTH_CHECK_INTERVAL", 30),
+		RedisRequired:            envBool("JM_API_REDIS_REQUIRED", false),
 
 		ServerPort: envInt("JM_API_SERVER_PORT", envInt("PORT", 8000)),
 		ServerHost: envOrDefault("JM_API_SERVER_HOST", "0.0.0.0"),
@@ -282,6 +284,10 @@ func (c *Config) validate() error {
 	}
 	if c.QueryTimeout <= 0 {
 		return fmt.Errorf("JM_API_DB_QUERY_TIMEOUT must be > 0")
+	}
+
+	if c.RedisRequired && c.RedisURL == "" {
+		return fmt.Errorf("JM_API_REDIS_URL is required when JM_API_REDIS_REQUIRED=true")
 	}
 
 	if c.RequestTimeoutDefault <= 0 || c.RequestTimeoutBotQuery <= 0 || c.RequestTimeoutWebhook <= 0 || c.RequestTimeoutAuth <= 0 || c.RequestTimeoutHealth <= 0 {

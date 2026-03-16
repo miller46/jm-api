@@ -43,6 +43,14 @@ var (
 		},
 		[]string{"method", "endpoint"},
 	)
+
+	redisConnectionFailures = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "redis_connection_failures_total",
+			Help: "Total number of Redis connection failures",
+		},
+		[]string{"stage"},
+	)
 )
 
 func RecordRequestTimeout(method, endpoint string) {
@@ -95,4 +103,8 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 		rw.written = true
 	}
 	return rw.ResponseWriter.Write(b)
+}
+
+func RecordRedisConnectionFailure(stage string) {
+	redisConnectionFailures.WithLabelValues(stage).Inc()
 }
