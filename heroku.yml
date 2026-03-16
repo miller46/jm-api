@@ -3,4 +3,6 @@ build:
     web: Dockerfile
 run:
   web: api
-  worker: worker
+  worker:
+    image: web
+    command: worker
