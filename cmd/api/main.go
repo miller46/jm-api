@@ -45,7 +45,14 @@ func run() error {
 	defer stop()
 
 	go func() {
-		slog.Info("starting server", "addr", httpServer.Addr, "env", cfg.Environment)
+		slog.Info(
+			"starting server",
+			"addr", httpServer.Addr,
+			"host", cfg.ServerHost,
+			"port", cfg.ServerPort,
+			"heroku_port_env", os.Getenv("PORT"),
+			"env", cfg.Environment,
+		)
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)
 			os.Exit(1)

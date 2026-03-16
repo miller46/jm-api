@@ -161,6 +161,35 @@ func TestLoad_InvalidCIDR(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid trusted proxy CIDR")
 }
 
+func TestLoad_ServerPort_FromPORTFallback(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "PORT", "54321")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 54321, cfg.ServerPort)
+}
+
+func TestLoad_ServerPort_JMAPIOverridesPORT(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "PORT", "54321")
+	setEnv(t, "JM_API_SERVER_PORT", "9000")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 9000, cfg.ServerPort)
+}
+
+func TestLoad_ServerPort_InvalidJMAPIFallsBackToPORT(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "PORT", "54321")
+	setEnv(t, "JM_API_SERVER_PORT", "not-a-number")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 54321, cfg.ServerPort)
+}
+
 func TestLoad_CustomValues(t *testing.T) {
 	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
 	setEnv(t, "JM_API_APP_NAME", "custom-api")
