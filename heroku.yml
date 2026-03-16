@@ -2,7 +2,11 @@ build:
   docker:
     web: Dockerfile
 run:
-  web: api
-  worker:
+  web:
+    command:
+      - api
     image: web
-    command: worker
+  worker:
+    command:
+      - worker
+    image: web
