@@ -262,6 +262,27 @@ Prometheus metrics exposed at `/metrics` (path configurable via `JM_API_METRICS_
 - `http_request_errors_total` — 4xx/5xx requests
 - `db_connection_attempts_total` — startup DB connection attempts by `result` (`success`/`failure`)
 
+### Debug Profiling (pprof)
+
+Go runtime profiles are exposed at `/debug/pprof/*` and are **admin-only** (Bearer access token required with `is_admin = true`).
+
+Common endpoints:
+
+- `/debug/pprof/` — index
+- `/debug/pprof/profile?seconds=30` — CPU profile
+- `/debug/pprof/heap` — heap profile
+- `/debug/pprof/goroutine` — goroutine dump/profile
+- `/debug/pprof/mutex` — mutex contention profile
+
+Example:
+
+```bash
+curl -H "Authorization: Bearer <admin_access_token>" \
+  "http://localhost:8000/debug/pprof/profile?seconds=10" > cpu.pprof
+
+go tool pprof -http=:0 cpu.pprof
+```
+
 ### Static Admin Dashboard
 
 A static file dashboard is served at `/admin/`. Files are embedded in the binary from the `static/` directory.
