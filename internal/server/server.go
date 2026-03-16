@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
+	"runtime"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -80,6 +82,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 	s.webhookSvc = service.NewWebhookService(s.queries, cbConfig)
 
+	s.setupProfiling()
 	s.setupRoutes()
 
 	// Start session cleanup with cancellable context
@@ -146,6 +149,29 @@ func (s *Server) Queries() *sqlc.Queries {
 	return s.queries
 }
 
+func (s *Server) setupProfiling() {
+	runtime.SetMutexProfileFraction(1)
+	runtime.SetBlockProfileRate(1)
+}
+
+func registerPprofRoutes(r chi.Router, authMW func(http.Handler) http.Handler) {
+	r.Route("/debug/pprof", func(r chi.Router) {
+		r.Use(authMW)
+		r.Use(middleware.RequireAdmin)
+
+		r.Get("/", pprof.Index)
+		r.Get("/cmdline", pprof.Cmdline)
+		r.Get("/profile", pprof.Profile)
+		r.Get("/symbol", pprof.Symbol)
+		r.Post("/symbol", pprof.Symbol)
+		r.Get("/trace", pprof.Trace)
+		r.Get("/heap", pprof.Handler("heap").ServeHTTP)
+		r.Get("/goroutine", pprof.Handler("goroutine").ServeHTTP)
+		r.Get("/mutex", pprof.Handler("mutex").ServeHTTP)
+		r.Get("/block", pprof.Handler("block").ServeHTTP)
+	})
+}
+
 func (s *Server) setupRoutes() {
 	r := s.router
 	cfg := s.cfg
@@ -194,6 +220,8 @@ func (s *Server) setupRoutes() {
 	// Auth middleware
 	authMW := middleware.Auth(cfg.JWTSigningKeys)
 	requestValidator := middleware.NewRequestValidator()
+
+	registerPprofRoutes(r, authMW)
 
 	r.Route(cfg.APIV1Prefix, func(r chi.Router) {
 		r.Use(rateLimiter.Middleware)
