@@ -35,7 +35,27 @@ var (
 		},
 		[]string{"service", "version", "method", "endpoint", "status"},
 	)
+
+	httpRequestTimeouts = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_request_timeouts_total",
+			Help: "Total number of HTTP request timeouts",
+		},
+		[]string{"method", "endpoint"},
+	)
+
+	redisConnectionFailures = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "redis_connection_failures_total",
+			Help: "Total number of Redis connection failures",
+		},
+		[]string{"stage"},
+	)
 )
+
+func RecordRequestTimeout(method, endpoint string) {
+	httpRequestTimeouts.WithLabelValues(method, endpoint).Inc()
+}
 
 func MetricsMiddleware(service, version string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -83,4 +103,8 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 		rw.written = true
 	}
 	return rw.ResponseWriter.Write(b)
+}
+
+func RecordRedisConnectionFailure(stage string) {
+	redisConnectionFailures.WithLabelValues(stage).Inc()
 }

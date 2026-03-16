@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,7 +31,24 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 15, cfg.JWTAccessTokenExpireMin)
 	assert.Equal(t, 7, cfg.JWTRefreshTokenExpireDays)
 	assert.Equal(t, 120, cfg.RateLimitAPIPerMinute)
+	assert.Equal(t, 20, cfg.DBPoolMaxConns)
+	assert.Equal(t, 2, cfg.DBPoolMinConns)
 	assert.Equal(t, 8000, cfg.ServerPort)
+	assert.True(t, cfg.DBConnectRetryEnabled)
+	assert.Equal(t, 5, cfg.DBConnectRetryMaxAttempts)
+	assert.Equal(t, time.Second, cfg.DBConnectRetryInitialDelay)
+	assert.Equal(t, 30*time.Second, cfg.DBConnectRetryMaxDelay)
+	assert.Equal(t, 3*time.Second, cfg.QueryTimeout)
+	assert.Equal(t, 30*time.Second, cfg.RequestTimeoutDefault)
+	assert.Equal(t, 10*time.Second, cfg.RequestTimeoutBotQuery)
+	assert.Equal(t, 60*time.Second, cfg.RequestTimeoutWebhook)
+	assert.Equal(t, 5*time.Second, cfg.RequestTimeoutAuth)
+	assert.Equal(t, 2*time.Second, cfg.RequestTimeoutHealth)
+	assert.False(t, cfg.RedisRequired)
+	assert.Equal(t, 10, cfg.WorkerMaxConcurrency)
+	assert.Equal(t, 10, cfg.WorkerMaxPerPoll)
+	assert.Equal(t, 5*time.Second, cfg.WorkerPollInterval)
+	assert.Equal(t, 30*time.Second, cfg.WorkerTaskTimeout)
 }
 
 func TestLoad_MissingDatabaseURL(t *testing.T) {
@@ -40,16 +58,15 @@ func TestLoad_MissingDatabaseURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "JM_API_DATABASE_URL is required")
 }
 
-func TestLoad_ProductionValidation_SQLite(t *testing.T) {
-	setEnv(t, "JM_API_DATABASE_URL", "sqlite:///test.db")
+func TestLoad_ProductionValidation_DoesNotValidateDatabaseScheme(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "mysql://localhost/test")
 	setEnv(t, "JM_API_ENVIRONMENT", "production")
 	setEnv(t, "JM_API_JWT_SECRET_KEY", "this-is-a-very-long-secret-key-for-production-use")
 	setEnv(t, "JM_API_RATE_LIMIT_STORAGE_URI", "redis://localhost")
 	setEnv(t, "JM_API_BOTS_WRITE_ADMIN_ONLY", "true")
 
 	_, err := Load()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "SQLite not allowed")
+	require.NoError(t, err)
 }
 
 func TestLoad_ProductionValidation_WeakJWT(t *testing.T) {
@@ -108,6 +125,15 @@ func TestLoad_InvalidSampleRate(t *testing.T) {
 	assert.Contains(t, err.Error(), "LOG_SAMPLE_RATE")
 }
 
+func TestLoad_RedisRequired_RequiresRedisURL(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_REDIS_REQUIRED", "true")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JM_API_REDIS_URL is required")
+}
+
 func TestLoad_JWTSigningKeys(t *testing.T) {
 	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
 	setEnv(t, "JM_API_JWT_SIGNING_KEYS", "key1,key2,key3")
@@ -135,12 +161,49 @@ func TestLoad_InvalidCIDR(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid trusted proxy CIDR")
 }
 
+func TestLoad_ServerPort_FromPORTFallback(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "PORT", "54321")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 54321, cfg.ServerPort)
+}
+
+func TestLoad_ServerPort_JMAPIOverridesPORT(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "PORT", "54321")
+	setEnv(t, "JM_API_SERVER_PORT", "9000")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 9000, cfg.ServerPort)
+}
+
+func TestLoad_ServerPort_InvalidJMAPIFallsBackToPORT(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "PORT", "54321")
+	setEnv(t, "JM_API_SERVER_PORT", "not-a-number")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 54321, cfg.ServerPort)
+}
+
 func TestLoad_CustomValues(t *testing.T) {
 	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
 	setEnv(t, "JM_API_APP_NAME", "custom-api")
 	setEnv(t, "JM_API_SERVER_PORT", "9000")
 	setEnv(t, "JM_API_DEBUG", "true")
 	setEnv(t, "JM_API_ALLOW_ORIGINS", "http://localhost:3000,http://example.com")
+	setEnv(t, "JM_API_REQUEST_TIMEOUT_DEFAULT", "45s")
+	setEnv(t, "JM_API_DB_POOL_MAX_CONNS", "50")
+	setEnv(t, "JM_API_DB_POOL_MIN_CONNS", "10")
+	setEnv(t, "JM_API_WORKER_MAX_CONCURRENCY", "6")
+	setEnv(t, "JM_API_WORKER_MAX_PER_POLL", "12")
+	setEnv(t, "JM_API_WORKER_POLL_INTERVAL", "2s")
+	setEnv(t, "JM_API_WORKER_TASK_TIMEOUT", "20s")
+	setEnv(t, "JM_API_DB_QUERY_TIMEOUT", "7s")
 
 	cfg, err := Load()
 	require.NoError(t, err)
@@ -148,6 +211,87 @@ func TestLoad_CustomValues(t *testing.T) {
 	assert.Equal(t, 9000, cfg.ServerPort)
 	assert.True(t, cfg.Debug)
 	assert.Equal(t, []string{"http://localhost:3000", "http://example.com"}, cfg.AllowOrigins)
+	assert.Equal(t, 45*time.Second, cfg.RequestTimeoutDefault)
+	assert.Equal(t, 50, cfg.DBPoolMaxConns)
+	assert.Equal(t, 10, cfg.DBPoolMinConns)
+	assert.Equal(t, 6, cfg.WorkerMaxConcurrency)
+	assert.Equal(t, 12, cfg.WorkerMaxPerPoll)
+	assert.Equal(t, 2*time.Second, cfg.WorkerPollInterval)
+	assert.Equal(t, 20*time.Second, cfg.WorkerTaskTimeout)
+	assert.Equal(t, 7*time.Second, cfg.QueryTimeout)
+}
+
+func TestLoad_DBPoolLegacyEnvKeys(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "DB_POOL_MAX_CONNS", "40")
+	setEnv(t, "DB_POOL_MIN_CONNS", "8")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.Equal(t, 40, cfg.DBPoolMaxConns)
+	assert.Equal(t, 8, cfg.DBPoolMinConns)
+}
+
+func TestLoad_DBPoolValidation_MinExceedsMax(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_POOL_MAX_CONNS", "5")
+	setEnv(t, "JM_API_DB_POOL_MIN_CONNS", "10")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot exceed max")
+}
+
+func TestLoad_InvalidDBRetryMaxAttempts(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS")
+}
+
+func TestLoad_InvalidDBRetryDelayOrder(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS", "10")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS", "2")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS")
+}
+
+func TestLoad_CustomDBRetryValues(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_ENABLED", "false")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS", "8")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS", "2")
+	setEnv(t, "JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS", "12")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.DBConnectRetryEnabled)
+	assert.Equal(t, 8, cfg.DBConnectRetryMaxAttempts)
+	assert.Equal(t, 2*time.Second, cfg.DBConnectRetryInitialDelay)
+	assert.Equal(t, 12*time.Second, cfg.DBConnectRetryMaxDelay)
+}
+
+func TestLoad_InvalidQueryTimeout(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_DB_QUERY_TIMEOUT", "0s")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JM_API_DB_QUERY_TIMEOUT")
+}
+
+func TestLoad_WorkerValidation_InvalidConcurrency(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_WORKER_MAX_CONCURRENCY", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "worker max concurrency")
 }
 
 func TestIsProd(t *testing.T) {
@@ -159,4 +303,100 @@ func TestIsProd(t *testing.T) {
 
 	c.Environment = "development"
 	assert.False(t, c.IsProd())
+}
+
+func TestLoad_CircuitBreakerDefaults(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.True(t, cfg.CircuitBreakerEnabled)
+	assert.Equal(t, uint32(100), cfg.CircuitBreakerMaxRequests)
+	assert.Equal(t, 10*time.Second, cfg.CircuitBreakerInterval)
+	assert.Equal(t, 30*time.Second, cfg.CircuitBreakerTimeout)
+	assert.Equal(t, 0.6, cfg.CircuitBreakerFailureThreshold)
+	assert.Equal(t, uint32(3), cfg.CircuitBreakerMinRequests)
+	assert.Equal(t, uint32(5), cfg.CircuitBreakerConsecutiveFailures)
+	assert.Equal(t, 30*time.Second, cfg.CircuitBreakerOpenDuration)
+}
+
+func TestLoad_CircuitBreakerCustomValues(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_ENABLED", "false")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MAX_REQUESTS", "50")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_INTERVAL", "5s")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_TIMEOUT", "15s")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "0.8")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MIN_REQUESTS", "5")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_CONSECUTIVE_FAILURES", "10")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_OPEN_DURATION", "60s")
+
+	cfg, err := Load()
+	require.NoError(t, err)
+
+	assert.False(t, cfg.CircuitBreakerEnabled)
+	assert.Equal(t, uint32(50), cfg.CircuitBreakerMaxRequests)
+	assert.Equal(t, 5*time.Second, cfg.CircuitBreakerInterval)
+	assert.Equal(t, 15*time.Second, cfg.CircuitBreakerTimeout)
+	assert.Equal(t, 0.8, cfg.CircuitBreakerFailureThreshold)
+	assert.Equal(t, uint32(5), cfg.CircuitBreakerMinRequests)
+	assert.Equal(t, uint32(10), cfg.CircuitBreakerConsecutiveFailures)
+	assert.Equal(t, 60*time.Second, cfg.CircuitBreakerOpenDuration)
+}
+
+func TestLoad_CircuitBreakerValidation_InvalidMaxRequests(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MAX_REQUESTS", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker max requests")
+}
+
+func TestLoad_CircuitBreakerValidation_InvalidFailureThreshold(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "1.5")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker failure threshold")
+}
+
+func TestLoad_CircuitBreakerValidation_ZeroFailureThreshold(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker failure threshold")
+}
+
+func TestLoad_CircuitBreakerValidation_InvalidMinRequests(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MIN_REQUESTS", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker min requests")
+}
+
+func TestLoad_CircuitBreakerValidation_InvalidOpenDuration(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_OPEN_DURATION", "0s")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "circuit breaker open duration")
+}
+
+func TestLoad_CircuitBreakerDisabled_NoValidation(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_ENABLED", "false")
+	setEnv(t, "JM_API_CIRCUIT_BREAKER_MAX_REQUESTS", "0")
+
+	// Should not validate when disabled
+	cfg, err := Load()
+	require.NoError(t, err)
+	assert.False(t, cfg.CircuitBreakerEnabled)
 }

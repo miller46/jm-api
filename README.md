@@ -84,7 +84,13 @@ make test
 go test ./... -v -count=1
 ```
 
-42 tests cover config, middleware, model, observability, and service packages. Handler tests are not included (require a live database).
+Test coverage includes handler integration tests backed by ephemeral Postgres via testcontainers-go.
+
+To run only integration tests:
+
+```sh
+go test ./... -v -count=1 -tags integration
+```
 
 ## API Reference
 
@@ -119,6 +125,22 @@ Base path: `/api/v1` (configurable via `JM_API_API_V1_PREFIX`)
 | POST | `/api/v1/auth/sessions/revoke-others` | Bearer | Revoke all sessions except current |
 
 **Login rate limit:** 5 requests/minute. **Signup rate limit:** 5 requests/minute.
+
+`/auth/login` and `/auth/signup` use request-body validation middleware driven by struct tags (`required`, `min`, `max`, `email`, etc.). Invalid requests return a consistent payload:
+
+```json
+{
+  "error": "validation_failed",
+  "message": "Request validation failed",
+  "details": [
+    {
+      "field": "password",
+      "rule": "min",
+      "message": "Password must be at least 8 characters"
+    }
+  ]
+}
+```
 
 Login response:
 ```json
@@ -176,6 +198,7 @@ All webhook endpoints require authentication. Webhooks are user-scoped — users
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| POST | `/api/v1/webhooks/verify` | Public | Verify webhook signature (rate-limited 10 req/min per IP) |
 | POST | `/api/v1/webhooks` | Bearer | Create a webhook |
 | GET | `/api/v1/webhooks` | Bearer | List webhooks for current user |
 | PATCH | `/api/v1/webhooks/{id}` | Bearer | Update a webhook |
@@ -196,9 +219,62 @@ Supported event types: `bot.created`, `bot.updated`, `bot.deleted`, `bot.ran`
 Webhook target URLs must be publicly reachable HTTPS or HTTP endpoints. `localhost`, `.local` domains, and private IP ranges are rejected.
 
 **Delivery mechanism:** Up to 5 attempts with exponential backoff. Each delivery POSTs JSON with headers:
-- `X-Webhook-Signature: sha256=<hmac-sha256 of body>`
+- `X-Webhook-Signature: t=<unix_timestamp>,v1=<hmac_sha256_hex(timestamp + "." + raw_body)>`
 - `X-Webhook-Event: <event-type>`
 - `X-Webhook-Delivery: <event-id>`
+
+#### Signature verification test endpoint
+
+`POST /api/v1/webhooks/verify`
+
+Request body:
+```json
+{
+  "payload": "{\"id\":\"evt_123\",\"type\":\"bot.created\"}",
+  "signature": "t=1700000000,v1=649ba89390fcec3cc9ef4bdbbf4762e4cf514ce62610d493afaca4193ca61344",
+  "secret": "whsec_test"
+}
+```
+
+Response:
+- `200 {"valid":true}` when signature is valid.
+- `400 {"valid":false,"error":"..."}` when invalid.
+
+Algorithm (Stripe-style):
+1. Parse `signature` as `t=<unix>,v1=<hex>`.
+2. Build signed payload string: `"<t>.<raw payload string>"`.
+3. Compute `HMAC_SHA256(secret, signed_payload)` and compare to `v1` using constant-time compare.
+4. Reject timestamps outside a 5-minute tolerance window.
+
+Test vector implementations:
+
+```python
+import hmac, hashlib
+
+def sign(secret: str, payload: str, timestamp: int) -> str:
+    signed = f"{timestamp}.{payload}".encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
+    return f"t={timestamp},v1={digest}"
+```
+
+```javascript
+import crypto from "node:crypto";
+
+function sign(secret, payload, timestamp) {
+  const signed = `${timestamp}.${payload}`;
+  const digest = crypto.createHmac("sha256", secret).update(signed, "utf8").digest("hex");
+  return `t=${timestamp},v1=${digest}`;
+}
+```
+
+```go
+func sign(secret, payload string, timestamp int64) string {
+    msg := fmt.Sprintf("%d.%s", timestamp, payload)
+    mac := hmac.New(sha256.New, []byte(secret))
+    mac.Write([]byte(msg))
+    return fmt.Sprintf("t=%d,v1=%s", timestamp, hex.EncodeToString(mac.Sum(nil)))
+}
+```
 
 ### Tasks
 
@@ -238,6 +314,28 @@ Prometheus metrics exposed at `/metrics` (path configurable via `JM_API_METRICS_
 - `http_requests_total` — by method, endpoint pattern, status
 - `http_request_duration_seconds` — histogram
 - `http_request_errors_total` — 4xx/5xx requests
+- `db_connection_attempts_total` — startup DB connection attempts by `result` (`success`/`failure`)
+
+### Debug Profiling (pprof)
+
+Go runtime profiles are exposed at `/debug/pprof/*` and are **admin-only** (Bearer access token required with `is_admin = true`).
+
+Common endpoints:
+
+- `/debug/pprof/` — index
+- `/debug/pprof/profile?seconds=30` — CPU profile
+- `/debug/pprof/heap` — heap profile
+- `/debug/pprof/goroutine` — goroutine dump/profile
+- `/debug/pprof/mutex` — mutex contention profile
+
+Example:
+
+```bash
+curl -H "Authorization: Bearer <admin_access_token>" \
+  "http://localhost:8000/debug/pprof/profile?seconds=10" > cpu.pprof
+
+go tool pprof -http=:0 cpu.pprof
+```
 
 ### Static Admin Dashboard
 
@@ -267,6 +365,66 @@ All configuration is via environment variables with the `JM_API_` prefix. Unset 
 | `JM_API_DEBUG` | `false` | Enable debug mode |
 | `JM_API_APP_NAME` | `jm-api` | Application name (used in metrics labels) |
 | `JM_API_APP_VERSION` | `0.1.0` | Application version |
+| `JM_API_DB_CONNECT_RETRY_ENABLED` | `true` | Enable startup DB connection retries (API + worker) |
+| `JM_API_DB_CONNECT_RETRY_MAX_ATTEMPTS` | `5` | Maximum startup DB connection attempts |
+| `JM_API_DB_CONNECT_RETRY_INITIAL_DELAY_SECONDS` | `1` | Initial delay before retry (exponential backoff) |
+| `JM_API_DB_CONNECT_RETRY_MAX_DELAY_SECONDS` | `30` | Maximum delay cap for retries |
+
+### Database Pool
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_DB_POOL_MAX_CONNS` | `20` | Maximum PostgreSQL connections in pool |
+| `JM_API_DB_POOL_MIN_CONNS` | `2` | Minimum PostgreSQL connections maintained in pool |
+| `DB_POOL_MAX_CONNS` | `20` | Legacy alias for `JM_API_DB_POOL_MAX_CONNS` |
+| `DB_POOL_MIN_CONNS` | `2` | Legacy alias for `JM_API_DB_POOL_MIN_CONNS` |
+
+Recommended sizing:
+- Small (dev/test): max=10, min=2
+- Medium (production): max=20, min=5
+- Large (high-load): max=50, min=10
+
+### Database Pool
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_DB_POOL_MAX_CONNS` | `20` | Maximum PostgreSQL connections in pool |
+| `JM_API_DB_POOL_MIN_CONNS` | `2` | Minimum PostgreSQL connections maintained in pool |
+| `DB_POOL_MAX_CONNS` | `20` | Legacy alias for `JM_API_DB_POOL_MAX_CONNS` |
+| `DB_POOL_MIN_CONNS` | `2` | Legacy alias for `JM_API_DB_POOL_MIN_CONNS` |
+
+Recommended sizing:
+- Small (dev/test): max=10, min=2
+- Medium (production): max=20, min=5
+- Large (high-load): max=50, min=10
+
+### Database Pool
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_DB_POOL_MAX_CONNS` | `20` | Maximum PostgreSQL connections in pool |
+| `JM_API_DB_POOL_MIN_CONNS` | `2` | Minimum PostgreSQL connections maintained in pool |
+| `DB_POOL_MAX_CONNS` | `20` | Legacy alias for `JM_API_DB_POOL_MAX_CONNS` |
+| `DB_POOL_MIN_CONNS` | `2` | Legacy alias for `JM_API_DB_POOL_MIN_CONNS` |
+
+Recommended sizing:
+- Small (dev/test): max=10, min=2
+- Medium (production): max=20, min=5
+- Large (high-load): max=50, min=10
+
+### Database Pool
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_DB_POOL_MAX_CONNS` | `20` | Maximum PostgreSQL connections in pool |
+| `JM_API_DB_POOL_MIN_CONNS` | `2` | Minimum PostgreSQL connections maintained in pool |
+| `DB_POOL_MAX_CONNS` | `20` | Legacy alias for `JM_API_DB_POOL_MAX_CONNS` |
+| `DB_POOL_MIN_CONNS` | `2` | Legacy alias for `JM_API_DB_POOL_MIN_CONNS` |
+
+Recommended sizing:
+- Small (dev/test): max=10, min=2
+- Medium (production): max=20, min=5
+- Large (high-load): max=50, min=10
 
 ### Server
 
@@ -276,6 +434,18 @@ All configuration is via environment variables with the `JM_API_` prefix. Unset 
 | `JM_API_SERVER_PORT` | `8000` | Bind port |
 | `JM_API_SHUTDOWN_TIMEOUT` | `30` | Graceful shutdown timeout (seconds) |
 | `JM_API_API_V1_PREFIX` | `/api/v1` | API v1 route prefix |
+
+### Request Timeouts
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_REQUEST_TIMEOUT_DEFAULT` | `30s` | Default timeout for standard API handlers |
+| `JM_API_REQUEST_TIMEOUT_BOT_QUERY` | `10s` | Timeout for `/bots` endpoints |
+| `JM_API_REQUEST_TIMEOUT_WEBHOOK` | `60s` | Timeout for `/webhooks` endpoints |
+| `JM_API_REQUEST_TIMEOUT_AUTH` | `5s` | Timeout for `/auth` endpoints |
+| `JM_API_REQUEST_TIMEOUT_HEALTH` | `2s` | Timeout for health endpoints |
+
+Timed responses return `504 Gateway Timeout` with JSON `{ "error": "Request timed out" }` and include the `X-Request-Timeout` response header.
 
 ### JWT & Sessions
 
@@ -379,6 +549,19 @@ If Redis is configured but the connection fails at startup, the server falls bac
 | `JM_API_BOTS_WRITE_ADMIN_ONLY` | `false` | Restrict bot create/update/delete to admin users |
 | `JM_API_I_UNDERSTAND_RISK` | `false` | Set to `true` to allow non-admin bot writes in production |
 
+### Circuit Breaker (Webhook Delivery)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JM_API_CIRCUIT_BREAKER_ENABLED` | `true` | Enable per-webhook circuit breaker protection |
+| `JM_API_CIRCUIT_BREAKER_MAX_REQUESTS` | `100` | Max requests allowed while half-open |
+| `JM_API_CIRCUIT_BREAKER_INTERVAL` | `10s` | Rolling stats window for failure counters |
+| `JM_API_CIRCUIT_BREAKER_TIMEOUT` | `30s` | HTTP request timeout for webhook delivery attempts |
+| `JM_API_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `0.6` | Open circuit when failure rate reaches this ratio |
+| `JM_API_CIRCUIT_BREAKER_MIN_REQUESTS` | `3` | Minimum requests before failure-rate tripping applies |
+| `JM_API_CIRCUIT_BREAKER_CONSECUTIVE_FAILURES` | `5` | Open circuit after this many consecutive failures |
+| `JM_API_CIRCUIT_BREAKER_OPEN_DURATION` | `30s` | How long a circuit stays open before transitioning to half-open |
+
 ## Production Requirements
 
 The server enforces these additional validations when `JM_API_ENVIRONMENT` is `production` or `staging`:
@@ -387,7 +570,6 @@ The server enforces these additional validations when `JM_API_ENVIRONMENT` is `p
 - `JM_API_RATE_LIMIT_STORAGE_URI` must not be `memory://` (Redis required)
 - `JM_API_BOTS_WRITE_ADMIN_ONLY=true` or `JM_API_I_UNDERSTAND_RISK=true`
 - If `JM_API_TRUST_PROXY_HEADERS=true`, `JM_API_TRUSTED_PROXY_CIDRS` must be set
-- SQLite is not allowed (PostgreSQL only)
 
 ## CI/CD Pipeline
 
@@ -537,7 +719,14 @@ Generated files in `internal/db/sqlc/` are committed to the repository and must 
 
 ## Background Worker
 
-The worker polls the `tasks` table every 5 seconds for queued tasks, processing up to 10 per poll cycle. It uses a simple handler registry pattern:
+The worker uses a bounded worker pool to process queued tasks with backpressure. Defaults are 10 concurrent tasks, up to 10 submissions per poll cycle, 5s poll interval, and 30s per-task timeout. These are configurable via:
+
+- `JM_API_WORKER_MAX_CONCURRENCY`
+- `JM_API_WORKER_MAX_PER_POLL`
+- `JM_API_WORKER_POLL_INTERVAL`
+- `JM_API_WORKER_TASK_TIMEOUT`
+
+It uses a simple handler registry pattern:
 
 ```go
 worker.RegisterHandler("my-task", func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {

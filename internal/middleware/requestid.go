@@ -18,11 +18,44 @@ func RequestID(headerName string) func(http.Handler) http.Handler {
 			if id == "" {
 				id = uuid.New().String()
 			}
+
 			ctx := context.WithValue(r.Context(), RequestIDKey, id)
-			w.Header().Set(headerName, id)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			rw := &requestIDResponseWriter{
+				ResponseWriter: w,
+				headerName:     headerName,
+				requestID:      id,
+			}
+			rw.Header().Set(headerName, id)
+
+			next.ServeHTTP(rw, r.WithContext(ctx))
 		})
 	}
+}
+
+// requestIDResponseWriter guarantees request ID header propagation even if
+// downstream handlers replace/clear headers before writing an error response.
+type requestIDResponseWriter struct {
+	http.ResponseWriter
+	headerName string
+	requestID  string
+	wrote      bool
+}
+
+func (w *requestIDResponseWriter) WriteHeader(statusCode int) {
+	if !w.wrote {
+		if w.Header().Get(w.headerName) == "" {
+			w.Header().Set(w.headerName, w.requestID)
+		}
+		w.wrote = true
+	}
+	w.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (w *requestIDResponseWriter) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
 }
 
 func GetRequestID(ctx context.Context) string {

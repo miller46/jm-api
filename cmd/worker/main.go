@@ -9,10 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/jackc/pgx/v5/pgxpool"
-
 	"github.com/jack/jm-api-go/internal/config"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
+	"github.com/jack/jm-api-go/internal/dbconn"
 	"github.com/jack/jm-api-go/internal/observability"
 	"github.com/jack/jm-api-go/internal/service"
 )
@@ -32,19 +31,35 @@ func run() error {
 
 	observability.SetupLogging(cfg.LogLevel, cfg.LogJSON, cfg.LogSampleRate)
 
-	pool, err := pgxpool.New(context.Background(), cfg.DatabaseURL)
+	pool, err := dbconn.ConnectWithRetry(context.Background(), cfg)
 	if err != nil {
 		return fmt.Errorf("connecting to database: %w", err)
 	}
 	defer pool.Close()
 
-	queries := sqlc.New(pool)
-	worker := service.NewWorkerService(queries)
+	queries := sqlc.New(sqlc.WithQueryTimeout(pool, cfg.QueryTimeout))
+	worker := service.NewWorkerServiceFromSQLC(pool, queries)
+	worker.Configure(cfg.WorkerMaxConcurrency, cfg.WorkerPollInterval, cfg.WorkerMaxPerPoll, cfg.WorkerTaskTimeout)
+
+	var cbConfig *service.CircuitBreakerConfig
+	if cfg.CircuitBreakerEnabled {
+		cbConfig = &service.CircuitBreakerConfig{
+			MaxRequests:        cfg.CircuitBreakerMaxRequests,
+			Interval:           cfg.CircuitBreakerInterval,
+			Timeout:            cfg.CircuitBreakerTimeout,
+			FailureThreshold:   cfg.CircuitBreakerFailureThreshold,
+			MinRequests:        cfg.CircuitBreakerMinRequests,
+			ConsecutiveFailure: cfg.CircuitBreakerConsecutiveFailures,
+			OpenDuration:       cfg.CircuitBreakerOpenDuration,
+		}
+	}
+	webhookSvc := service.NewWebhookService(queries, cbConfig)
 
 	// Register task handlers
 	worker.RegisterHandler("echo", func(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
 		return payload, nil
 	})
+	worker.RegisterHandler(service.WebhookDeliveryTaskType, webhookSvc.HandleWebhookDeliveryTask)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()

@@ -2,10 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/http/pprof"
+	"runtime"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -16,6 +19,7 @@ import (
 
 	"github.com/jack/jm-api-go/internal/config"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
+	"github.com/jack/jm-api-go/internal/dbconn"
 	"github.com/jack/jm-api-go/internal/handler"
 	"github.com/jack/jm-api-go/internal/middleware"
 	"github.com/jack/jm-api-go/internal/observability"
@@ -28,6 +32,8 @@ type Server struct {
 	router        chi.Router
 	db            *pgxpool.Pool
 	redis         *redis.Client
+	redisLastErr  error
+	redisFailures uint64
 	shutdownGuard *middleware.ShutdownGuard
 	queries       *sqlc.Queries
 	authService   *service.AuthService
@@ -46,7 +52,7 @@ func New(cfg *config.Config) (*Server, error) {
 	observability.SetupLogging(cfg.LogLevel, cfg.LogJSON, cfg.LogSampleRate)
 
 	// Setup database
-	if err := s.setupDB(cfg.DatabaseURL); err != nil {
+	if err := s.setupDB(); err != nil {
 		return nil, fmt.Errorf("setting up database: %w", err)
 	}
 
@@ -56,7 +62,7 @@ func New(cfg *config.Config) (*Server, error) {
 	}
 
 	// Setup services
-	s.queries = sqlc.New(s.db)
+	s.queries = sqlc.New(sqlc.WithQueryTimeout(s.db, cfg.QueryTimeout))
 	s.authService = service.NewAuthService(
 		s.queries,
 		cfg.JWTSigningKeys,
@@ -64,8 +70,22 @@ func New(cfg *config.Config) (*Server, error) {
 		cfg.JWTAccessTokenExpireMin,
 		cfg.JWTRefreshTokenExpireDays,
 	)
-	s.webhookSvc = service.NewWebhookService(s.queries)
 
+	var cbConfig *service.CircuitBreakerConfig
+	if cfg.CircuitBreakerEnabled {
+		cbConfig = &service.CircuitBreakerConfig{
+			MaxRequests:        cfg.CircuitBreakerMaxRequests,
+			Interval:           cfg.CircuitBreakerInterval,
+			Timeout:            cfg.CircuitBreakerTimeout,
+			FailureThreshold:   cfg.CircuitBreakerFailureThreshold,
+			MinRequests:        cfg.CircuitBreakerMinRequests,
+			ConsecutiveFailure: cfg.CircuitBreakerConsecutiveFailures,
+			OpenDuration:       cfg.CircuitBreakerOpenDuration,
+		}
+	}
+	s.webhookSvc = service.NewWebhookService(s.queries, cbConfig)
+
+	s.setupProfiling()
 	s.setupRoutes()
 
 	// Start session cleanup with cancellable context
@@ -75,25 +95,14 @@ func New(cfg *config.Config) (*Server, error) {
 	return s, nil
 }
 
-func (s *Server) setupDB(databaseURL string) error {
-	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+func (s *Server) setupDB() error {
+	pool, err := dbconn.ConnectWithRetry(context.Background(), s.cfg)
 	if err != nil {
-		return fmt.Errorf("parsing database URL: %w", err)
-	}
-	poolConfig.MaxConns = 20
-	poolConfig.MinConns = 2
-
-	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
-	if err != nil {
-		return fmt.Errorf("creating connection pool: %w", err)
-	}
-
-	if err := pool.Ping(context.Background()); err != nil {
-		return fmt.Errorf("pinging database: %w", err)
+		return err
 	}
 
 	s.db = pool
-	slog.Info("database connected")
+	slog.Info("database connected", "db_pool_max_conns", s.cfg.DBPoolMaxConns, "db_pool_min_conns", s.cfg.DBPoolMinConns)
 	return nil
 }
 
@@ -108,11 +117,45 @@ func (s *Server) setupRedis(cfg *config.Config) {
 		ReadTimeout:  time.Duration(cfg.RedisSocketTimeout) * time.Second,
 	})
 	if err := s.redis.Ping(context.Background()).Err(); err != nil {
-		slog.Warn("redis connection failed, falling back to in-memory", "error", err)
+		s.redisLastErr = err
+		s.redisFailures++
+		observability.RecordRedisConnectionFailure("startup")
+		slog.Error("redis.connection.failed",
+			"timestamp", time.Now().UTC().Format(time.RFC3339Nano),
+			"error", err.Error(),
+			"retry_count", s.redisFailures,
+			"required", cfg.RedisRequired,
+		)
 		s.redis = nil
 	} else {
+		s.redisLastErr = nil
 		slog.Info("redis connected")
 	}
+}
+
+func (s *Server) redisHealthCheck(ctx context.Context) error {
+	if s.redis == nil {
+		if s.redisLastErr != nil {
+			return s.redisLastErr
+		}
+		return errors.New("redis not configured")
+	}
+
+	if err := s.redis.Ping(ctx).Err(); err != nil {
+		s.redisLastErr = err
+		s.redisFailures++
+		observability.RecordRedisConnectionFailure("healthcheck")
+		slog.Error("redis.connection.failed",
+			"timestamp", time.Now().UTC().Format(time.RFC3339Nano),
+			"error", err.Error(),
+			"retry_count", s.redisFailures,
+			"required", s.cfg.RedisRequired,
+		)
+		return err
+	}
+
+	s.redisLastErr = nil
+	return nil
 }
 
 func (s *Server) Router() chi.Router {
@@ -141,6 +184,29 @@ func (s *Server) DB() *pgxpool.Pool {
 
 func (s *Server) Queries() *sqlc.Queries {
 	return s.queries
+}
+
+func (s *Server) setupProfiling() {
+	runtime.SetMutexProfileFraction(1)
+	runtime.SetBlockProfileRate(1)
+}
+
+func registerPprofRoutes(r chi.Router, authMW func(http.Handler) http.Handler) {
+	r.Route("/debug/pprof", func(r chi.Router) {
+		r.Use(authMW)
+		r.Use(middleware.RequireAdmin)
+
+		r.Get("/", pprof.Index)
+		r.Get("/cmdline", pprof.Cmdline)
+		r.Get("/profile", pprof.Profile)
+		r.Get("/symbol", pprof.Symbol)
+		r.Post("/symbol", pprof.Symbol)
+		r.Get("/trace", pprof.Trace)
+		r.Get("/heap", pprof.Handler("heap").ServeHTTP)
+		r.Get("/goroutine", pprof.Handler("goroutine").ServeHTTP)
+		r.Get("/mutex", pprof.Handler("mutex").ServeHTTP)
+		r.Get("/block", pprof.Handler("block").ServeHTTP)
+	})
 }
 
 func (s *Server) setupRoutes() {
@@ -174,15 +240,19 @@ func (s *Server) setupRoutes() {
 	}, middleware.WithTrustedProxies(cfg.TrustProxyHeaders, cfg.TrustedProxyCIDRs))
 	rateLimiter.SetOverride("/login", middleware.RateLimitConfig{PerMinute: 5, Window: 15 * time.Minute})
 	rateLimiter.SetOverride("/signup", middleware.RateLimitConfig{PerMinute: 5, Window: 15 * time.Minute})
+	rateLimiter.SetOverride("/webhooks/verify", middleware.RateLimitConfig{PerMinute: 10})
 
 	// Handlers
 	var healthOpts []handler.HealthOption
 	if cfg.DBMigrationCheckEnabled {
 		healthOpts = append(healthOpts, handler.WithMigrationCheck(cfg.DBExpectedMigration))
 	}
+	if cfg.RedisURL != "" || cfg.RedisRequired {
+		healthOpts = append(healthOpts, handler.WithRedisCheck(s.redisHealthCheck, cfg.RedisRequired))
+	}
 	healthH := handler.NewHealthHandler(s.db, healthOpts...)
 	authH := handler.NewAuthHandler(s.authService)
-	adminH := handler.NewAdminHandler(healthH)
+	adminH := handler.NewAdminHandler(healthH, s.webhookSvc)
 	metaH := handler.NewMetaHandler(cfg)
 	botH := handler.NewBotHandler(s.queries, s.webhookSvc)
 	webhookH := handler.NewWebhookHandler(s.queries, s.webhookSvc)
@@ -190,23 +260,33 @@ func (s *Server) setupRoutes() {
 
 	// Auth middleware
 	authMW := middleware.Auth(cfg.JWTSigningKeys)
+	requestValidator := middleware.NewRequestValidator()
+
+	registerPprofRoutes(r, authMW)
 
 	r.Route(cfg.APIV1Prefix, func(r chi.Router) {
 		r.Use(rateLimiter.Middleware)
+		r.Use(middleware.RequestTimeout(cfg.RequestTimeoutDefault))
 
 		// Public health endpoints
-		r.Get("/live", healthH.Live)
-		r.Get("/health", healthH.Health)
-		r.Get("/ready", healthH.Ready)
-		r.Get("/healthz", healthH.Healthz)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RequestTimeout(cfg.RequestTimeoutHealth))
+			r.Get("/live", healthH.Live)
+			r.Get("/health", healthH.Health)
+			r.Get("/ready", healthH.Ready)
+			r.Get("/healthz", healthH.Healthz)
+		})
 
 		// CSRF middleware for all mutating routes
 		csrfMW := middleware.CSRF
 
+		r.With(middleware.RequestTimeout(cfg.RequestTimeoutWebhook)).Post("/webhooks/verify", webhookH.Verify)
+
 		// Auth routes (mostly public)
 		r.Route("/auth", func(r chi.Router) {
-			r.Post("/login", authH.Login)
-			r.Post("/signup", authH.Signup)
+			r.Use(middleware.RequestTimeout(cfg.RequestTimeoutAuth))
+			r.With(middleware.ValidateBody[handler.LoginRequest](requestValidator)).Post("/login", authH.Login)
+			r.With(middleware.ValidateBody[handler.SignupRequest](requestValidator)).Post("/signup", authH.Signup)
 			r.Post("/refresh", authH.Refresh)
 
 			r.Group(func(r chi.Router) {
@@ -228,10 +308,12 @@ func (s *Server) setupRoutes() {
 			r.Post("/break", adminH.TriggerBreak)
 			r.Post("/break/reset", adminH.ResetBreak)
 			r.Get("/break/status", adminH.BreakStatus)
+			r.Get("/circuit-breakers", adminH.CircuitBreakerStatus)
 		})
 
 		// Bots - reads are public
 		r.Route("/bots", func(r chi.Router) {
+			r.Use(middleware.RequestTimeout(cfg.RequestTimeoutBotQuery))
 			r.Get("/", botH.List)
 			r.Get("/{id}", botH.Get)
 
@@ -253,6 +335,7 @@ func (s *Server) setupRoutes() {
 			r.Use(csrfMW)
 
 			r.Route("/webhooks", func(r chi.Router) {
+				r.Use(middleware.RequestTimeout(cfg.RequestTimeoutWebhook))
 				r.Post("/", webhookH.Create)
 				r.Get("/", webhookH.List)
 				r.Patch("/{id}", webhookH.Update)
@@ -268,10 +351,13 @@ func (s *Server) setupRoutes() {
 	})
 
 	// Root-level health routes (legacy compat)
-	r.Get("/live", healthH.Live)
-	r.Get("/health", healthH.Health)
-	r.Get("/ready", healthH.Ready)
-	r.Get("/healthz", healthH.Healthz)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequestTimeout(cfg.RequestTimeoutHealth))
+		r.Get("/live", healthH.Live)
+		r.Get("/health", healthH.Health)
+		r.Get("/ready", healthH.Ready)
+		r.Get("/healthz", healthH.Healthz)
+	})
 
 	// Static admin dashboard
 	staticFS, err := fs.Sub(static.Files, ".")
@@ -284,9 +370,12 @@ func (s *Server) setupRoutes() {
 
 	// Outside v1 prefix
 	tablesH := handler.NewTablesHandler()
-	r.Get("/api/tables", tablesH.List)
-	r.Get("/api/schema", tablesH.Schema)
-	r.Get("/api/meta", metaH.Meta)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequestTimeout(cfg.RequestTimeoutDefault))
+		r.Get("/api/tables", tablesH.List)
+		r.Get("/api/schema", tablesH.Schema)
+		r.Get("/api/meta", metaH.Meta)
+	})
 	r.Handle(cfg.MetricsPath, promhttp.Handler())
 }
 

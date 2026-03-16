@@ -10,11 +10,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type RedisChecker func(ctx context.Context) error
+
 type HealthHandler struct {
 	db                    *pgxpool.Pool
 	healthBreak           atomic.Bool
 	migrationCheckEnabled bool
 	expectedMigration     int
+	redisCheck            RedisChecker
+	redisRequired         bool
 }
 
 type HealthOption func(*HealthHandler)
@@ -23,6 +27,13 @@ func WithMigrationCheck(expectedVersion int) HealthOption {
 	return func(h *HealthHandler) {
 		h.migrationCheckEnabled = true
 		h.expectedMigration = expectedVersion
+	}
+}
+
+func WithRedisCheck(check RedisChecker, required bool) HealthOption {
+	return func(h *HealthHandler) {
+		h.redisCheck = check
+		h.redisRequired = required
 	}
 }
 
@@ -76,6 +87,21 @@ func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 			overallStatus = "fail"
 		} else {
 			checks["migration"] = map[string]string{"status": "ok"}
+		}
+	}
+
+	// Redis check
+	if h.redisCheck == nil {
+		checks["redis"] = map[string]string{"status": "not_configured"}
+	} else {
+		if err := h.redisCheck(r.Context()); err != nil {
+			checks["redis"] = map[string]string{"status": "fail", "error": err.Error()}
+			if h.redisRequired {
+				status = http.StatusServiceUnavailable
+				overallStatus = "fail"
+			}
+		} else {
+			checks["redis"] = map[string]string{"status": "ok"}
 		}
 	}
 

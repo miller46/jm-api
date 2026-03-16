@@ -7,27 +7,41 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
 	"github.com/jack/jm-api-go/internal/model"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/sony/gobreaker"
 )
 
-type WebhookService struct {
-	queries *sqlc.Queries
-	client  *http.Client
+const WebhookDeliveryTaskType = "webhook.delivery"
+
+type WebhookDeliveryTaskPayload struct {
+	WebhookID string          `json:"webhook_id"`
+	EventType string          `json:"event_type"`
+	Data      json.RawMessage `json:"data"`
 }
 
-func NewWebhookService(q *sqlc.Queries) *WebhookService {
+type WebhookService struct {
+	queries               *sqlc.Queries
+	client                *http.Client
+	circuitManager        *CircuitBreakerManager
+	circuitBreakerEnabled bool
+}
+
+func NewWebhookService(q *sqlc.Queries, cbConfig *CircuitBreakerConfig) *WebhookService {
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -48,13 +62,21 @@ func NewWebhookService(q *sqlc.Queries) *WebhookService {
 			return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
 		},
 	}
-	return &WebhookService{
+
+	svc := &WebhookService{
 		queries: q,
 		client: &http.Client{
 			Timeout:   10 * time.Second,
 			Transport: transport,
 		},
+		circuitBreakerEnabled: cbConfig != nil,
 	}
+
+	if cbConfig != nil {
+		svc.circuitManager = NewCircuitBreakerManager(*cbConfig)
+	}
+
+	return svc
 }
 
 type WebhookEvent struct {
@@ -121,10 +143,95 @@ func isPrivateIP(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
-func signPayload(secret string, payload []byte) string {
+const webhookSignatureTolerance = 5 * time.Minute
+
+func signPayload(secret string, payload []byte, timestamp int64) string {
+	signedPayload := strconv.FormatInt(timestamp, 10) + "." + string(payload)
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(payload)
-	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	mac.Write([]byte(signedPayload))
+	return "t=" + strconv.FormatInt(timestamp, 10) + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func SignWebhookPayloadAt(secret string, payload []byte, timestamp int64) string {
+	return signPayload(secret, payload, timestamp)
+}
+
+func SignWebhookPayload(secret string, payload []byte) string {
+	return signPayload(secret, payload, time.Now().Unix())
+}
+
+func VerifyWebhookSignatureDetailed(secret string, payload []byte, providedSignature string, now time.Time, tolerance time.Duration) (bool, string) {
+	parts := strings.Split(strings.TrimSpace(providedSignature), ",")
+	if len(parts) < 2 {
+		return false, "signature must be in format t=<unix>,v1=<hex>"
+	}
+
+	var timestampRaw string
+	var sigCandidates []string
+	for _, part := range parts {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		switch kv[0] {
+		case "t":
+			timestampRaw = kv[1]
+		case "v1":
+			sigCandidates = append(sigCandidates, kv[1])
+		}
+	}
+
+	if timestampRaw == "" {
+		return false, "signature timestamp (t) is required"
+	}
+	if len(sigCandidates) == 0 {
+		return false, "signature hash (v1) is required"
+	}
+
+	timestamp, err := strconv.ParseInt(timestampRaw, 10, 64)
+	if err != nil {
+		return false, "invalid signature timestamp"
+	}
+
+	if tolerance > 0 {
+		delta := now.Unix() - timestamp
+		if delta < 0 {
+			delta = -delta
+		}
+		if time.Duration(delta)*time.Second > tolerance {
+			return false, "signature timestamp outside allowed tolerance"
+		}
+	}
+
+	expected := signPayload(secret, payload, timestamp)
+	expectedParts := strings.SplitN(expected, ",", 2)
+	expectedV1 := ""
+	if len(expectedParts) == 2 {
+		expectedV1 = strings.TrimPrefix(expectedParts[1], "v1=")
+	}
+
+	for _, candidate := range sigCandidates {
+		if hmac.Equal([]byte(expectedV1), []byte(candidate)) {
+			return true, ""
+		}
+	}
+
+	return false, "signature mismatch"
+}
+
+func VerifyWebhookSignature(secret string, payload []byte, providedSignature string) bool {
+	valid, _ := VerifyWebhookSignatureDetailed(secret, payload, providedSignature, time.Now().UTC(), webhookSignatureTolerance)
+	return valid
+}
+
+func retryBackoffWithJitter(attempt int, random float64) time.Duration {
+	if attempt < 1 {
+		return 0
+	}
+
+	base := time.Duration(math.Pow(2, float64(attempt-1))) * time.Second
+	jitterFactor := 0.8 + (random * 0.4)
+	return time.Duration(float64(base) * jitterFactor)
 }
 
 func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook, eventType string, data interface{}) error {
@@ -141,7 +248,7 @@ func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook
 		return fmt.Errorf("marshaling event: %w", err)
 	}
 
-	signature := signPayload(webhook.Secret, payload)
+	signature := SignWebhookPayload(webhook.Secret, payload)
 
 	maxAttempts := 5
 	var lastErr error
@@ -150,7 +257,7 @@ func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt > 1 {
-			backoff := time.Duration(math.Pow(2, float64(attempt-1))) * time.Second
+			backoff := retryBackoffWithJitter(attempt, rand.Float64())
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -158,7 +265,7 @@ func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook
 			}
 		}
 
-		statusCode, responseBody, lastErr = ws.doDelivery(ctx, webhook.TargetUrl, payload, signature, eventType, event.ID)
+		statusCode, responseBody, lastErr = ws.doDelivery(ctx, webhook.ID, webhook.TargetUrl, payload, signature, eventType, event.ID)
 
 		if lastErr == nil && statusCode >= 200 && statusCode < 300 {
 			ws.logDelivery(ctx, webhook.ID, event.ID, eventType, true, attempt, &statusCode, responseBody, "")
@@ -182,7 +289,7 @@ func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook
 	return fmt.Errorf("webhook delivery failed after %d attempts: %v", maxAttempts, lastErr)
 }
 
-func (ws *WebhookService) doDelivery(ctx context.Context, targetURL string, payload []byte, signature, eventType, eventID string) (int, string, error) {
+func (ws *WebhookService) doDelivery(ctx context.Context, webhookID, targetURL string, payload []byte, signature, eventType, eventID string) (int, string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL, bytes.NewReader(payload))
 	if err != nil {
 		return 0, "", err
@@ -193,8 +300,17 @@ func (ws *WebhookService) doDelivery(ctx context.Context, targetURL string, payl
 	req.Header.Set("X-Webhook-Event", eventType)
 	req.Header.Set("X-Webhook-Delivery", eventID)
 
-	resp, err := ws.client.Do(req)
+	var resp *http.Response
+	if ws.circuitBreakerEnabled && ws.circuitManager != nil {
+		resp, err = ws.circuitManager.DoHTTPRequest(ctx, webhookID, ws.client, req)
+	} else {
+		resp, err = ws.client.Do(req)
+	}
+
 	if err != nil {
+		if errors.Is(err, gobreaker.ErrOpenState) {
+			return 0, "", fmt.Errorf("circuit breaker open: %w", err)
+		}
 		return 0, "", err
 	}
 	defer resp.Body.Close()
@@ -248,10 +364,110 @@ func (ws *WebhookService) DispatchEvent(ctx context.Context, eventType string, d
 	}
 
 	for _, webhook := range webhooks {
-		go func(wh sqlc.Webhook) {
-			if err := ws.DeliverEvent(context.Background(), wh, eventType, data); err != nil {
-				slog.Error("webhook delivery failed", "webhook_id", wh.ID, "error", err)
-			}
-		}(webhook)
+		if err := ws.EnqueueDeliveryTask(ctx, webhook.ID, eventType, data); err != nil {
+			slog.Error("failed to enqueue webhook delivery", "webhook_id", webhook.ID, "event_type", eventType, "error", err)
+		}
 	}
+}
+
+func (ws *WebhookService) EnqueueDeliveryTask(ctx context.Context, webhookID, eventType string, data interface{}) error {
+	payload, err := marshalWebhookDeliveryTaskPayload(webhookID, eventType, data)
+	if err != nil {
+		return err
+	}
+
+	_, err = ws.queries.CreateTask(ctx, sqlc.CreateTaskParams{
+		ID:      model.GenerateID(),
+		Type:    WebhookDeliveryTaskType,
+		Payload: payload,
+	})
+	if err != nil {
+		return fmt.Errorf("creating webhook task: %w", err)
+	}
+
+	return nil
+}
+
+func marshalWebhookDeliveryTaskPayload(webhookID, eventType string, data interface{}) (json.RawMessage, error) {
+	dataJSON, err := json.Marshal(data)
+	if err != nil {
+		return nil, fmt.Errorf("marshal webhook task data: %w", err)
+	}
+
+	payload, err := json.Marshal(WebhookDeliveryTaskPayload{
+		WebhookID: webhookID,
+		EventType: eventType,
+		Data:      dataJSON,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal webhook task payload: %w", err)
+	}
+
+	return payload, nil
+}
+
+// GetCircuitBreakerState returns the circuit breaker state for a webhook
+func (ws *WebhookService) GetCircuitBreakerState(webhookID string) CircuitState {
+	if ws.circuitManager == nil {
+		return CircuitClosed
+	}
+	return ws.circuitManager.GetState(webhookID)
+}
+
+// GetAllCircuitBreakerStates returns all circuit breaker states
+func (ws *WebhookService) GetAllCircuitBreakerStates() map[string]CircuitState {
+	if ws.circuitManager == nil {
+		return make(map[string]CircuitState)
+	}
+	return ws.circuitManager.GetAllStates()
+}
+
+// GetCircuitBreakerMetrics returns circuit breaker metrics
+func (ws *WebhookService) GetCircuitBreakerMetrics() map[string]interface{} {
+	if ws.circuitManager == nil {
+		return map[string]interface{}{}
+	}
+	return ws.circuitManager.GetMetrics()
+}
+
+// ResetCircuitBreaker resets a circuit breaker for a specific webhook
+func (ws *WebhookService) ResetCircuitBreaker(webhookID string) {
+	if ws.circuitManager != nil {
+		ws.circuitManager.Reset(webhookID)
+	}
+}
+
+func (ws *WebhookService) HandleWebhookDeliveryTask(ctx context.Context, payload json.RawMessage) (json.RawMessage, error) {
+	var taskPayload WebhookDeliveryTaskPayload
+	if err := json.Unmarshal(payload, &taskPayload); err != nil {
+		return nil, fmt.Errorf("unmarshal webhook task payload: %w", err)
+	}
+
+	if taskPayload.WebhookID == "" {
+		return nil, fmt.Errorf("webhook_id is required")
+	}
+	if taskPayload.EventType == "" {
+		return nil, fmt.Errorf("event_type is required")
+	}
+
+	webhook, err := ws.queries.GetWebhookByID(ctx, taskPayload.WebhookID)
+	if err != nil {
+		return nil, fmt.Errorf("get webhook: %w", err)
+	}
+	if !webhook.IsActive {
+		return json.RawMessage(`{"status":"skipped","reason":"webhook_inactive"}`), nil
+	}
+
+	var data interface{}
+	if len(taskPayload.Data) > 0 {
+		if err := json.Unmarshal(taskPayload.Data, &data); err != nil {
+			return nil, fmt.Errorf("unmarshal webhook task data: %w", err)
+		}
+	}
+
+	if err := ws.DeliverEvent(ctx, webhook, taskPayload.EventType, data); err != nil {
+		return nil, err
+	}
+
+	return json.RawMessage(`{"status":"delivered"}`), nil
 }
