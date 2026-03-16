@@ -62,24 +62,48 @@ func TestIsPrivateIP(t *testing.T) {
 }
 
 func TestSignPayload(t *testing.T) {
-	sig1 := signPayload("secret", []byte(`{"test": true}`))
-	sig2 := signPayload("secret", []byte(`{"test": true}`))
-	sig3 := signPayload("other-secret", []byte(`{"test": true}`))
+	payload := []byte(`{"test": true}`)
+	sig1 := signPayload("secret", payload, 1700000000)
+	sig2 := signPayload("secret", payload, 1700000000)
+	sig3 := signPayload("other-secret", payload, 1700000000)
+	sig4 := signPayload("secret", payload, 1700000001)
 
 	assert.Equal(t, sig1, sig2)
 	assert.NotEqual(t, sig1, sig3)
-	assert.Contains(t, sig1, "sha256=")
+	assert.NotEqual(t, sig1, sig4)
+	assert.Contains(t, sig1, "t=1700000000,v1=")
 }
 
 func TestVerifyWebhookSignature(t *testing.T) {
 	payload := []byte(`{"id":"evt_1","type":"bot.created"}`)
 	secret := "supersecret"
-	signature := SignWebhookPayload(secret, payload)
+	now := time.Unix(1700000100, 0).UTC()
+	signature := SignWebhookPayloadAt(secret, payload, 1700000000)
 
-	assert.True(t, VerifyWebhookSignature(secret, payload, signature))
-	assert.False(t, VerifyWebhookSignature("wrong-secret", payload, signature))
-	assert.False(t, VerifyWebhookSignature(secret, []byte(`{"id":"evt_2"}`), signature))
-	assert.False(t, VerifyWebhookSignature(secret, payload, "sha256=bad"))
+	valid, _ := VerifyWebhookSignatureDetailed(secret, payload, signature, now, 5*time.Minute)
+	assert.True(t, valid)
+
+	valid, errMsg := VerifyWebhookSignatureDetailed("wrong-secret", payload, signature, now, 5*time.Minute)
+	assert.False(t, valid)
+	assert.Equal(t, "signature mismatch", errMsg)
+
+	valid, errMsg = VerifyWebhookSignatureDetailed(secret, []byte(`{"id":"evt_2"}`), signature, now, 5*time.Minute)
+	assert.False(t, valid)
+	assert.Equal(t, "signature mismatch", errMsg)
+
+	valid, errMsg = VerifyWebhookSignatureDetailed(secret, payload, "sha256=bad", now, 5*time.Minute)
+	assert.False(t, valid)
+	assert.Contains(t, errMsg, "format")
+}
+
+func TestVerifyWebhookSignatureDetailed_ExpiredTimestamp(t *testing.T) {
+	payload := []byte(`{"id":"evt_1"}`)
+	secret := "supersecret"
+	signature := SignWebhookPayloadAt(secret, payload, 1700000000)
+
+	valid, errMsg := VerifyWebhookSignatureDetailed(secret, payload, signature, time.Unix(1700000400, 0).UTC(), 5*time.Minute)
+	assert.False(t, valid)
+	assert.Equal(t, "signature timestamp outside allowed tolerance", errMsg)
 }
 
 func TestMarshalWebhookDeliveryTaskPayload(t *testing.T) {

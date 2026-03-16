@@ -16,6 +16,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -142,19 +143,85 @@ func isPrivateIP(ip net.IP) bool {
 	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }
 
-func signPayload(secret string, payload []byte) string {
+const webhookSignatureTolerance = 5 * time.Minute
+
+func signPayload(secret string, payload []byte, timestamp int64) string {
+	signedPayload := strconv.FormatInt(timestamp, 10) + "." + string(payload)
 	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(payload)
-	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	mac.Write([]byte(signedPayload))
+	return "t=" + strconv.FormatInt(timestamp, 10) + ",v1=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func SignWebhookPayloadAt(secret string, payload []byte, timestamp int64) string {
+	return signPayload(secret, payload, timestamp)
 }
 
 func SignWebhookPayload(secret string, payload []byte) string {
-	return signPayload(secret, payload)
+	return signPayload(secret, payload, time.Now().Unix())
+}
+
+func VerifyWebhookSignatureDetailed(secret string, payload []byte, providedSignature string, now time.Time, tolerance time.Duration) (bool, string) {
+	parts := strings.Split(strings.TrimSpace(providedSignature), ",")
+	if len(parts) < 2 {
+		return false, "signature must be in format t=<unix>,v1=<hex>"
+	}
+
+	var timestampRaw string
+	var sigCandidates []string
+	for _, part := range parts {
+		kv := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		switch kv[0] {
+		case "t":
+			timestampRaw = kv[1]
+		case "v1":
+			sigCandidates = append(sigCandidates, kv[1])
+		}
+	}
+
+	if timestampRaw == "" {
+		return false, "signature timestamp (t) is required"
+	}
+	if len(sigCandidates) == 0 {
+		return false, "signature hash (v1) is required"
+	}
+
+	timestamp, err := strconv.ParseInt(timestampRaw, 10, 64)
+	if err != nil {
+		return false, "invalid signature timestamp"
+	}
+
+	if tolerance > 0 {
+		delta := now.Unix() - timestamp
+		if delta < 0 {
+			delta = -delta
+		}
+		if time.Duration(delta)*time.Second > tolerance {
+			return false, "signature timestamp outside allowed tolerance"
+		}
+	}
+
+	expected := signPayload(secret, payload, timestamp)
+	expectedParts := strings.SplitN(expected, ",", 2)
+	expectedV1 := ""
+	if len(expectedParts) == 2 {
+		expectedV1 = strings.TrimPrefix(expectedParts[1], "v1=")
+	}
+
+	for _, candidate := range sigCandidates {
+		if hmac.Equal([]byte(expectedV1), []byte(candidate)) {
+			return true, ""
+		}
+	}
+
+	return false, "signature mismatch"
 }
 
 func VerifyWebhookSignature(secret string, payload []byte, providedSignature string) bool {
-	expected := signPayload(secret, payload)
-	return hmac.Equal([]byte(expected), []byte(strings.TrimSpace(providedSignature)))
+	valid, _ := VerifyWebhookSignatureDetailed(secret, payload, providedSignature, time.Now().UTC(), webhookSignatureTolerance)
+	return valid
 }
 
 func retryBackoffWithJitter(attempt int, random float64) time.Duration {
@@ -181,7 +248,7 @@ func (ws *WebhookService) DeliverEvent(ctx context.Context, webhook sqlc.Webhook
 		return fmt.Errorf("marshaling event: %w", err)
 	}
 
-	signature := signPayload(webhook.Secret, payload)
+	signature := SignWebhookPayload(webhook.Secret, payload)
 
 	maxAttempts := 5
 	var lastErr error

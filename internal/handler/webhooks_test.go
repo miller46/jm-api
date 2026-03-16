@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jack/jm-api-go/internal/service"
@@ -18,9 +19,9 @@ func TestWebhookHandler_Verify(t *testing.T) {
 	router := chi.NewRouter()
 	router.Post("/webhooks/verify", h.Verify)
 
-	payload := json.RawMessage(`{"id":"evt_123","type":"bot.created"}`)
+	payload := `{"id":"evt_123","type":"bot.created"}`
 	secret := "supersecret"
-	validSig := service.SignWebhookPayload(secret, payload)
+	validSig := service.SignWebhookPayloadAt(secret, []byte(payload), time.Now().UTC().Unix())
 
 	t.Run("valid signature", func(t *testing.T) {
 		reqBody := map[string]any{
@@ -44,7 +45,7 @@ func TestWebhookHandler_Verify(t *testing.T) {
 	t.Run("invalid signature", func(t *testing.T) {
 		reqBody := map[string]any{
 			"payload":   payload,
-			"signature": "sha256=invalid",
+			"signature": "t=1700000000,v1=invalid",
 			"secret":    secret,
 		}
 		body, _ := json.Marshal(reqBody)
@@ -54,10 +55,11 @@ func TestWebhookHandler_Verify(t *testing.T) {
 
 		router.ServeHTTP(res, req)
 
-		require.Equal(t, http.StatusOK, res.Code)
-		var resp map[string]bool
+		require.Equal(t, http.StatusBadRequest, res.Code)
+		var resp map[string]any
 		require.NoError(t, json.NewDecoder(res.Body).Decode(&resp))
-		assert.False(t, resp["valid"])
+		assert.Equal(t, false, resp["valid"])
+		assert.NotEmpty(t, resp["error"])
 	})
 }
 
@@ -70,9 +72,9 @@ func TestWebhookHandler_Verify_BadRequest(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "missing payload", body: `{"signature":"sha256=abc","secret":"secret"}`},
-		{name: "missing signature", body: `{"payload":{"id":"evt"},"secret":"secret"}`},
-		{name: "missing secret", body: `{"payload":{"id":"evt"},"signature":"sha256=abc"}`},
+		{name: "missing payload", body: `{"signature":"t=1700000000,v1=abc","secret":"secret"}`},
+		{name: "missing signature", body: `{"payload":"{\"id\":\"evt\"}","secret":"secret"}`},
+		{name: "missing secret", body: `{"payload":"{\"id\":\"evt\"}","signature":"t=1700000000,v1=abc"}`},
 	}
 
 	for _, tt := range tests {
@@ -83,6 +85,10 @@ func TestWebhookHandler_Verify_BadRequest(t *testing.T) {
 
 			router.ServeHTTP(res, req)
 			require.Equal(t, http.StatusBadRequest, res.Code)
+			var resp map[string]any
+			require.NoError(t, json.NewDecoder(res.Body).Decode(&resp))
+			assert.Equal(t, false, resp["valid"])
+			assert.NotEmpty(t, resp["error"])
 		})
 	}
 }

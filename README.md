@@ -198,6 +198,7 @@ All webhook endpoints require authentication. Webhooks are user-scoped — users
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| POST | `/api/v1/webhooks/verify` | Public | Verify webhook signature (rate-limited 10 req/min per IP) |
 | POST | `/api/v1/webhooks` | Bearer | Create a webhook |
 | GET | `/api/v1/webhooks` | Bearer | List webhooks for current user |
 | PATCH | `/api/v1/webhooks/{id}` | Bearer | Update a webhook |
@@ -218,9 +219,62 @@ Supported event types: `bot.created`, `bot.updated`, `bot.deleted`, `bot.ran`
 Webhook target URLs must be publicly reachable HTTPS or HTTP endpoints. `localhost`, `.local` domains, and private IP ranges are rejected.
 
 **Delivery mechanism:** Up to 5 attempts with exponential backoff. Each delivery POSTs JSON with headers:
-- `X-Webhook-Signature: sha256=<hmac-sha256 of body>`
+- `X-Webhook-Signature: t=<unix_timestamp>,v1=<hmac_sha256_hex(timestamp + "." + raw_body)>`
 - `X-Webhook-Event: <event-type>`
 - `X-Webhook-Delivery: <event-id>`
+
+#### Signature verification test endpoint
+
+`POST /api/v1/webhooks/verify`
+
+Request body:
+```json
+{
+  "payload": "{\"id\":\"evt_123\",\"type\":\"bot.created\"}",
+  "signature": "t=1700000000,v1=649ba89390fcec3cc9ef4bdbbf4762e4cf514ce62610d493afaca4193ca61344",
+  "secret": "whsec_test"
+}
+```
+
+Response:
+- `200 {"valid":true}` when signature is valid.
+- `400 {"valid":false,"error":"..."}` when invalid.
+
+Algorithm (Stripe-style):
+1. Parse `signature` as `t=<unix>,v1=<hex>`.
+2. Build signed payload string: `"<t>.<raw payload string>"`.
+3. Compute `HMAC_SHA256(secret, signed_payload)` and compare to `v1` using constant-time compare.
+4. Reject timestamps outside a 5-minute tolerance window.
+
+Test vector implementations:
+
+```python
+import hmac, hashlib
+
+def sign(secret: str, payload: str, timestamp: int) -> str:
+    signed = f"{timestamp}.{payload}".encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
+    return f"t={timestamp},v1={digest}"
+```
+
+```javascript
+import crypto from "node:crypto";
+
+function sign(secret, payload, timestamp) {
+  const signed = `${timestamp}.${payload}`;
+  const digest = crypto.createHmac("sha256", secret).update(signed, "utf8").digest("hex");
+  return `t=${timestamp},v1=${digest}`;
+}
+```
+
+```go
+func sign(secret, payload string, timestamp int64) string {
+    msg := fmt.Sprintf("%d.%s", timestamp, payload)
+    mac := hmac.New(sha256.New, []byte(secret))
+    mac.Write([]byte(msg))
+    return fmt.Sprintf("t=%d,v1=%s", timestamp, hex.EncodeToString(mac.Sum(nil)))
+}
+```
 
 ### Tasks
 
