@@ -208,7 +208,7 @@ func Load() (*Config, error) {
 		RedisHealthCheckInterval: envInt("JM_API_REDIS_HEALTH_CHECK_INTERVAL", 30),
 		RedisRequired:            envBool("JM_API_REDIS_REQUIRED", false),
 
-		ServerPort: envInt("JM_API_SERVER_PORT", envInt("PORT", 8000)),
+		ServerPort: envIntFromKeys([]string{"JM_API_SERVER_PORT", "PORT"}, 8000),
 		ServerHost: envOrDefault("JM_API_SERVER_HOST", "0.0.0.0"),
 
 		RequestTimeoutDefault:  envDuration("JM_API_REQUEST_TIMEOUT_DEFAULT", 30*time.Second),
@@ -396,7 +396,7 @@ func envIntFromKeys(keys []string, defaultVal int) int {
 		if v := os.Getenv(key); v != "" {
 			i, err := strconv.Atoi(v)
 			if err != nil {
-				return defaultVal
+				continue
 			}
 			return i
 		}
