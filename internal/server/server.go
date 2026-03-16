@@ -203,6 +203,7 @@ func (s *Server) setupRoutes() {
 	}, middleware.WithTrustedProxies(cfg.TrustProxyHeaders, cfg.TrustedProxyCIDRs))
 	rateLimiter.SetOverride("/login", middleware.RateLimitConfig{PerMinute: 5, Window: 15 * time.Minute})
 	rateLimiter.SetOverride("/signup", middleware.RateLimitConfig{PerMinute: 5, Window: 15 * time.Minute})
+	rateLimiter.SetOverride("/webhooks/verify", middleware.RateLimitConfig{PerMinute: 10})
 
 	// Handlers
 	var healthOpts []handler.HealthOption

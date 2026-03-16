@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jack/jm-api-go/internal/db/sqlc"
@@ -35,13 +36,14 @@ type updateWebhookRequest struct {
 }
 
 type verifyWebhookSignatureRequest struct {
-	Payload   json.RawMessage `json:"payload"`
-	Signature string          `json:"signature"`
-	Secret    string          `json:"secret"`
+	Payload   string `json:"payload"`
+	Signature string `json:"signature"`
+	Secret    string `json:"secret"`
 }
 
 type verifyWebhookSignatureResponse struct {
-	Valid bool `json:"valid"`
+	Valid bool   `json:"valid"`
+	Error string `json:"error,omitempty"`
 }
 
 func (h *WebhookHandler) Verify(w http.ResponseWriter, r *http.Request) {
@@ -51,22 +53,26 @@ func (h *WebhookHandler) Verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(req.Payload) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload is required"})
+	if req.Payload == "" {
+		writeJSON(w, http.StatusBadRequest, verifyWebhookSignatureResponse{Valid: false, Error: "payload is required"})
 		return
 	}
 	if req.Signature == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "signature is required"})
+		writeJSON(w, http.StatusBadRequest, verifyWebhookSignatureResponse{Valid: false, Error: "signature is required"})
 		return
 	}
 	if req.Secret == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "secret is required"})
+		writeJSON(w, http.StatusBadRequest, verifyWebhookSignatureResponse{Valid: false, Error: "secret is required"})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, verifyWebhookSignatureResponse{
-		Valid: service.VerifyWebhookSignature(req.Secret, req.Payload, req.Signature),
-	})
+	valid, errMsg := service.VerifyWebhookSignatureDetailed(req.Secret, []byte(req.Payload), req.Signature, time.Now().UTC(), 5*time.Minute)
+	if !valid {
+		writeJSON(w, http.StatusBadRequest, verifyWebhookSignatureResponse{Valid: false, Error: errMsg})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, verifyWebhookSignatureResponse{Valid: true})
 }
 
 func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
