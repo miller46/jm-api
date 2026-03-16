@@ -44,6 +44,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 60*time.Second, cfg.RequestTimeoutWebhook)
 	assert.Equal(t, 5*time.Second, cfg.RequestTimeoutAuth)
 	assert.Equal(t, 2*time.Second, cfg.RequestTimeoutHealth)
+	assert.False(t, cfg.RedisRequired)
 	assert.Equal(t, 10, cfg.WorkerMaxConcurrency)
 	assert.Equal(t, 10, cfg.WorkerMaxPerPoll)
 	assert.Equal(t, 5*time.Second, cfg.WorkerPollInterval)
@@ -122,6 +123,15 @@ func TestLoad_InvalidSampleRate(t *testing.T) {
 	_, err := Load()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "LOG_SAMPLE_RATE")
+}
+
+func TestLoad_RedisRequired_RequiresRedisURL(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_REDIS_REQUIRED", "true")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JM_API_REDIS_URL is required")
 }
 
 func TestLoad_JWTSigningKeys(t *testing.T) {
