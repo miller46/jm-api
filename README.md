@@ -18,7 +18,7 @@ A Go REST API built on chi v5 with PostgreSQL (sqlc + pgx v5), JWT authenticatio
 
 ## Prerequisites
 
-- Go 1.25+
+- Go 1.24+
 - PostgreSQL
 - [golang-migrate CLI](https://github.com/golang-migrate/migrate/tree/master/cmd/migrate) (for running migrations manually)
 - Redis (optional in dev, required in production)
@@ -384,48 +384,6 @@ Recommended sizing:
 - Medium (production): max=20, min=5
 - Large (high-load): max=50, min=10
 
-### Database Pool
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JM_API_DB_POOL_MAX_CONNS` | `20` | Maximum PostgreSQL connections in pool |
-| `JM_API_DB_POOL_MIN_CONNS` | `2` | Minimum PostgreSQL connections maintained in pool |
-| `DB_POOL_MAX_CONNS` | `20` | Legacy alias for `JM_API_DB_POOL_MAX_CONNS` |
-| `DB_POOL_MIN_CONNS` | `2` | Legacy alias for `JM_API_DB_POOL_MIN_CONNS` |
-
-Recommended sizing:
-- Small (dev/test): max=10, min=2
-- Medium (production): max=20, min=5
-- Large (high-load): max=50, min=10
-
-### Database Pool
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JM_API_DB_POOL_MAX_CONNS` | `20` | Maximum PostgreSQL connections in pool |
-| `JM_API_DB_POOL_MIN_CONNS` | `2` | Minimum PostgreSQL connections maintained in pool |
-| `DB_POOL_MAX_CONNS` | `20` | Legacy alias for `JM_API_DB_POOL_MAX_CONNS` |
-| `DB_POOL_MIN_CONNS` | `2` | Legacy alias for `JM_API_DB_POOL_MIN_CONNS` |
-
-Recommended sizing:
-- Small (dev/test): max=10, min=2
-- Medium (production): max=20, min=5
-- Large (high-load): max=50, min=10
-
-### Database Pool
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JM_API_DB_POOL_MAX_CONNS` | `20` | Maximum PostgreSQL connections in pool |
-| `JM_API_DB_POOL_MIN_CONNS` | `2` | Minimum PostgreSQL connections maintained in pool |
-| `DB_POOL_MAX_CONNS` | `20` | Legacy alias for `JM_API_DB_POOL_MAX_CONNS` |
-| `DB_POOL_MIN_CONNS` | `2` | Legacy alias for `JM_API_DB_POOL_MIN_CONNS` |
-
-Recommended sizing:
-- Small (dev/test): max=10, min=2
-- Medium (production): max=20, min=5
-- Large (high-load): max=50, min=10
-
 ### Server
 
 | Variable | Default | Description |
@@ -599,7 +557,7 @@ Runs on pushes to `main` only. Uses concurrency control — only one deploy runs
 1. Checkout with full history (`fetch-depth: 0`)
 2. Configure `.netrc` for Heroku Git authentication
 3. `git push` to Heroku (`https://git.heroku.com/<app>.git HEAD:main`)
-4. Wait 30s for stabilization, then poll `/api/v1/health` up to 5 times (10s apart)
+4. Wait 30s for stabilization, then poll `/api/v1/health` up to 10 times (15s apart)
 5. Report deployment status
 
 ### Required Secrets & Variables
@@ -749,11 +707,15 @@ internal/
     migrate/  — SQL migration files
     queries/  — sqlc query definitions
     sqlc/     — Generated database code (do not edit)
+  dbconn/     — Database connection with retry logic
   handler/    — HTTP handlers (auth, bots, webhooks, tasks, health, admin, meta)
+  integration/ — Integration and chaos tests
   middleware/ — Request ID, security headers, auth, rate limiting, shutdown guard
   model/      — Shared domain types and response structs
   observability/ — Logging (slog), Prometheus metrics, OTEL tracing setup
-  service/    — Auth (JWT/bcrypt/sessions), webhook delivery, worker
   server/     — chi router assembly, dependency wiring, lifecycle management
+  service/    — Auth (JWT/bcrypt/sessions), webhook delivery, worker
+  testutil/   — Test helpers (ephemeral Postgres via testcontainers)
+  workerpool/ — Bounded worker pool for background task processing
 static/       — Embedded admin dashboard assets
 ```
