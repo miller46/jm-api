@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jack/jm-api-go/internal/db/sqlc"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +29,7 @@ func (s *schedulerQueriesStub) PickDueScheduledJobs(context.Context, int32) ([]s
 	return s.dueJobs, s.pickDueErr
 }
 
-func (s *schedulerQueriesStub) GetScheduledJobForUpdate(context.Context, string) (sqlc.ScheduledJob, error) {
+func (s *schedulerQueriesStub) GetScheduledJobForUpdate(context.Context, pgtype.UUID) (sqlc.ScheduledJob, error) {
 	if s.lockErr != nil {
 		return sqlc.ScheduledJob{}, s.lockErr
 	}
@@ -71,12 +72,14 @@ func (s *schedulerTransactorStub) InTx(ctx context.Context, fn func(q schedulerQ
 
 func TestSchedulerProcessJob_EnqueuesTaskAndUpdatesNextRun(t *testing.T) {
 	payload := json.RawMessage(`{"source":"scheduler"}`)
+	nextRun := time.Now().UTC()
 	job := sqlc.ScheduledJob{
-		ID:             "job_1",
+		ID:             mustUUID(t, "11111111-1111-1111-1111-111111111111"),
 		Name:           "nightly",
-		TaskType:       "echo",
-		TaskPayload:    payload,
+		JobType:        "echo",
+		Payload:        payload,
 		CronExpression: "*/5 * * * *",
+		NextRunAt:      &nextRun,
 	}
 	queries := &schedulerQueriesStub{lockedJob: job}
 	transactor := &schedulerTransactorStub{queries: queries}
@@ -94,7 +97,8 @@ func TestSchedulerProcessJob_EnqueuesTaskAndUpdatesNextRun(t *testing.T) {
 }
 
 func TestSchedulerProcessJob_InvalidCronSkipsEnqueue(t *testing.T) {
-	job := sqlc.ScheduledJob{ID: "job_1", Name: "invalid", CronExpression: "not-a-cron"}
+	nextRun := time.Now().UTC()
+	job := sqlc.ScheduledJob{ID: mustUUID(t, "22222222-2222-2222-2222-222222222222"), Name: "invalid", CronExpression: "not-a-cron", NextRunAt: &nextRun}
 	queries := &schedulerQueriesStub{lockedJob: job}
 	transactor := &schedulerTransactorStub{queries: queries}
 	svc := NewSchedulerService(queries, transactor, SchedulerConfig{})
@@ -107,7 +111,8 @@ func TestSchedulerProcessJob_InvalidCronSkipsEnqueue(t *testing.T) {
 }
 
 func TestSchedulerProcessJob_EnqueueFailureReturnsError(t *testing.T) {
-	job := sqlc.ScheduledJob{ID: "job_1", Name: "nightly", CronExpression: "*/10 * * * *", TaskType: "echo"}
+	nextRun := time.Now().UTC()
+	job := sqlc.ScheduledJob{ID: mustUUID(t, "33333333-3333-3333-3333-333333333333"), Name: "nightly", CronExpression: "*/10 * * * *", JobType: "echo", NextRunAt: &nextRun}
 	queries := &schedulerQueriesStub{lockedJob: job, createTaskErr: errors.New("queue down")}
 	transactor := &schedulerTransactorStub{queries: queries}
 	svc := NewSchedulerService(queries, transactor, SchedulerConfig{})
@@ -129,4 +134,11 @@ func TestSchedulerStartStop(t *testing.T) {
 	defer cancel()
 	err = svc.Stop(ctx)
 	require.NoError(t, err)
+}
+
+func mustUUID(t *testing.T, s string) pgtype.UUID {
+	t.Helper()
+	var id pgtype.UUID
+	require.NoError(t, id.Scan(s))
+	return id
 }

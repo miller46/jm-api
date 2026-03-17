@@ -10,7 +10,7 @@ func NewTablesHandler() *TablesHandler {
 }
 
 // tables is the sorted list of API resource tables exposed by the dashboard.
-var tables = []string{"bots", "tasks", "webhooks"}
+var tables = []string{"bots", "scheduled_jobs", "tasks", "webhooks"}
 
 func (h *TablesHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string][]string{"tables": tables})
@@ -42,6 +42,15 @@ var tableSchemas = map[string]TableSchema{
 			{Name: "last_run_at", Type: "datetime", Kind: "date_range", AfterParam: "last_run_at_from", BeforeParam: "last_run_at_to"},
 		},
 		CreateFields: []string{"rig_id", "kill_switch", "last_run_log"},
+	},
+	"scheduled_jobs": {
+		Filters: []FilterField{
+			{Name: "enabled", Type: "boolean", Kind: "single"},
+			{Name: "search", Type: "string", Kind: "single"},
+			{Name: "next_run_at", Type: "datetime", Kind: "date_range", AfterParam: "next_run_at_from", BeforeParam: "next_run_at_to"},
+			{Name: "created_at", Type: "datetime", Kind: "date_range", AfterParam: "created_at_from", BeforeParam: "created_at_to"},
+		},
+		CreateFields: []string{"name", "description", "job_type", "payload", "cron_expression", "next_run_at", "enabled"},
 	},
 	"webhooks": {
 		Filters:      []FilterField{},
