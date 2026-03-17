@@ -30,7 +30,7 @@ var Auth = {
     var redirectTo = params.get('redirect');
     
     if (!redirectTo) {
-      return 'index.html';
+      return '/';
     }
     
     // Decode the redirect parameter
@@ -43,7 +43,7 @@ var Auth = {
       var pathWithoutQuery = decodedRedirect.split('?')[0];
       // Allow paths that end with .html or are root /
       if (pathWithoutQuery.endsWith('.html') || pathWithoutQuery === '/') {
-        return decodedRedirect.substring(1) || 'index.html'; // Remove leading /
+        return decodedRedirect;
       }
     } else if (decodedRedirect.indexOf('://') === -1 && decodedRedirect.indexOf('//') !== 0) {
       // Relative path without protocol - check against allowlist
@@ -55,7 +55,7 @@ var Auth = {
     }
     
     // Default fallback for unsafe redirects
-    return 'index.html';
+    return '/';
   },
 
   // Redirect after successful login (with safe redirect handling)
