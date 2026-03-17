@@ -7,6 +7,7 @@ package sqlc
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -14,7 +15,7 @@ import (
 
 const countScheduledJobs = `-- name: CountScheduledJobs :one
 SELECT COUNT(*) FROM scheduled_jobs
-WHERE ($1::boolean IS NULL OR enabled = $1::boolean)
+WHERE ($1::boolean IS NULL OR is_enabled = $1::boolean)
   AND ($2::text IS NULL OR name ILIKE '%' || $2::text || '%')
 `
 
@@ -31,19 +32,19 @@ func (q *Queries) CountScheduledJobs(ctx context.Context, arg CountScheduledJobs
 }
 
 const createScheduledJob = `-- name: CreateScheduledJob :one
-INSERT INTO scheduled_jobs (name, description, job_type, payload, cron_expression, next_run_at, enabled)
+INSERT INTO scheduled_jobs (name, description, job_type, payload, cron_expression, next_run_at, is_enabled)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, name, description, job_type, payload, cron_expression, next_run_at, last_run_at, enabled, last_error, created_at, updated_at
+RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
 `
 
 type CreateScheduledJobParams struct {
-	Name           string      `json:"name"`
-	Description    pgtype.Text `json:"description"`
-	JobType        string      `json:"job_type"`
-	Payload        []byte      `json:"payload"`
-	CronExpression string      `json:"cron_expression"`
-	NextRunAt      *time.Time  `json:"next_run_at"`
-	Enabled        bool        `json:"enabled"`
+	Name           string          `json:"name"`
+	Description    pgtype.Text     `json:"description"`
+	JobType        string          `json:"job_type"`
+	Payload        json.RawMessage `json:"payload"`
+	CronExpression string          `json:"cron_expression"`
+	NextRunAt      *time.Time      `json:"next_run_at"`
+	IsEnabled      bool            `json:"is_enabled"`
 }
 
 func (q *Queries) CreateScheduledJob(ctx context.Context, arg CreateScheduledJobParams) (ScheduledJob, error) {
@@ -54,7 +55,7 @@ func (q *Queries) CreateScheduledJob(ctx context.Context, arg CreateScheduledJob
 		arg.Payload,
 		arg.CronExpression,
 		arg.NextRunAt,
-		arg.Enabled,
+		arg.IsEnabled,
 	)
 	var i ScheduledJob
 	err := row.Scan(
@@ -62,11 +63,11 @@ func (q *Queries) CreateScheduledJob(ctx context.Context, arg CreateScheduledJob
 		&i.Name,
 		&i.Description,
 		&i.JobType,
-		&i.Payload,
 		&i.CronExpression,
 		&i.NextRunAt,
+		&i.Payload,
+		&i.IsEnabled,
 		&i.LastRunAt,
-		&i.Enabled,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -84,7 +85,7 @@ func (q *Queries) DeleteScheduledJob(ctx context.Context, id pgtype.UUID) error 
 }
 
 const getScheduledJob = `-- name: GetScheduledJob :one
-SELECT id, name, description, job_type, payload, cron_expression, next_run_at, last_run_at, enabled, last_error, created_at, updated_at
+SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
 FROM scheduled_jobs
 WHERE id = $1
 `
@@ -97,11 +98,11 @@ func (q *Queries) GetScheduledJob(ctx context.Context, id pgtype.UUID) (Schedule
 		&i.Name,
 		&i.Description,
 		&i.JobType,
-		&i.Payload,
 		&i.CronExpression,
 		&i.NextRunAt,
+		&i.Payload,
+		&i.IsEnabled,
 		&i.LastRunAt,
-		&i.Enabled,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -110,7 +111,7 @@ func (q *Queries) GetScheduledJob(ctx context.Context, id pgtype.UUID) (Schedule
 }
 
 const getScheduledJobForUpdate = `-- name: GetScheduledJobForUpdate :one
-SELECT id, name, description, job_type, payload, cron_expression, next_run_at, last_run_at, enabled, last_error, created_at, updated_at
+SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
 FROM scheduled_jobs
 WHERE id = $1
 FOR UPDATE
@@ -124,11 +125,11 @@ func (q *Queries) GetScheduledJobForUpdate(ctx context.Context, id pgtype.UUID) 
 		&i.Name,
 		&i.Description,
 		&i.JobType,
-		&i.Payload,
 		&i.CronExpression,
 		&i.NextRunAt,
+		&i.Payload,
+		&i.IsEnabled,
 		&i.LastRunAt,
-		&i.Enabled,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -137,9 +138,9 @@ func (q *Queries) GetScheduledJobForUpdate(ctx context.Context, id pgtype.UUID) 
 }
 
 const listScheduledJobs = `-- name: ListScheduledJobs :many
-SELECT id, name, description, job_type, payload, cron_expression, next_run_at, last_run_at, enabled, last_error, created_at, updated_at
+SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
 FROM scheduled_jobs
-WHERE ($1::boolean IS NULL OR enabled = $1::boolean)
+WHERE ($1::boolean IS NULL OR is_enabled = $1::boolean)
   AND ($2::text IS NULL OR name ILIKE '%' || $2::text || '%')
 ORDER BY next_run_at ASC NULLS LAST
 LIMIT $4::int
@@ -172,11 +173,11 @@ func (q *Queries) ListScheduledJobs(ctx context.Context, arg ListScheduledJobsPa
 			&i.Name,
 			&i.Description,
 			&i.JobType,
-			&i.Payload,
 			&i.CronExpression,
 			&i.NextRunAt,
+			&i.Payload,
+			&i.IsEnabled,
 			&i.LastRunAt,
-			&i.Enabled,
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -192,13 +193,13 @@ func (q *Queries) ListScheduledJobs(ctx context.Context, arg ListScheduledJobsPa
 }
 
 const pickDueScheduledJobs = `-- name: PickDueScheduledJobs :many
-SELECT id, name, description, job_type, payload, cron_expression, next_run_at, last_run_at, enabled, last_error, created_at, updated_at
+SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
 FROM scheduled_jobs
 WHERE id IN (
     SELECT id
     FROM scheduled_jobs
     WHERE next_run_at <= NOW()
-      AND enabled = TRUE
+      AND is_enabled = TRUE
     ORDER BY next_run_at ASC
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -220,11 +221,11 @@ func (q *Queries) PickDueScheduledJobs(ctx context.Context, limit int32) ([]Sche
 			&i.Name,
 			&i.Description,
 			&i.JobType,
-			&i.Payload,
 			&i.CronExpression,
 			&i.NextRunAt,
+			&i.Payload,
+			&i.IsEnabled,
 			&i.LastRunAt,
-			&i.Enabled,
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -247,21 +248,21 @@ SET name = COALESCE($2, name),
     payload = COALESCE($5, payload),
     cron_expression = COALESCE($6, cron_expression),
     next_run_at = COALESCE($7, next_run_at),
-    enabled = COALESCE($8, enabled),
+    is_enabled = COALESCE($8, is_enabled),
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, description, job_type, payload, cron_expression, next_run_at, last_run_at, enabled, last_error, created_at, updated_at
+RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
 `
 
 type UpdateScheduledJobParams struct {
-	ID             pgtype.UUID  `json:"id"`
-	Name           string       `json:"name"`
-	Description    pgtype.Text  `json:"description"`
-	JobType        string       `json:"job_type"`
-	Payload        []byte       `json:"payload"`
-	CronExpression string       `json:"cron_expression"`
-	NextRunAt      *time.Time   `json:"next_run_at"`
-	Enabled        bool         `json:"enabled"`
+	ID             pgtype.UUID     `json:"id"`
+	Name           string          `json:"name"`
+	Description    pgtype.Text     `json:"description"`
+	JobType        string          `json:"job_type"`
+	Payload        json.RawMessage `json:"payload"`
+	CronExpression string          `json:"cron_expression"`
+	NextRunAt      *time.Time      `json:"next_run_at"`
+	IsEnabled      bool            `json:"is_enabled"`
 }
 
 func (q *Queries) UpdateScheduledJob(ctx context.Context, arg UpdateScheduledJobParams) (ScheduledJob, error) {
@@ -273,7 +274,7 @@ func (q *Queries) UpdateScheduledJob(ctx context.Context, arg UpdateScheduledJob
 		arg.Payload,
 		arg.CronExpression,
 		arg.NextRunAt,
-		arg.Enabled,
+		arg.IsEnabled,
 	)
 	var i ScheduledJob
 	err := row.Scan(
@@ -281,11 +282,11 @@ func (q *Queries) UpdateScheduledJob(ctx context.Context, arg UpdateScheduledJob
 		&i.Name,
 		&i.Description,
 		&i.JobType,
-		&i.Payload,
 		&i.CronExpression,
 		&i.NextRunAt,
+		&i.Payload,
+		&i.IsEnabled,
 		&i.LastRunAt,
-		&i.Enabled,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -298,12 +299,12 @@ UPDATE scheduled_jobs
 SET next_run_at = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, description, job_type, payload, cron_expression, next_run_at, last_run_at, enabled, last_error, created_at, updated_at
+RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
 `
 
 type UpdateScheduledJobNextRunAtParams struct {
 	ID        pgtype.UUID `json:"id"`
-	NextRunAt time.Time   `json:"next_run_at"`
+	NextRunAt *time.Time  `json:"next_run_at"`
 }
 
 func (q *Queries) UpdateScheduledJobNextRunAt(ctx context.Context, arg UpdateScheduledJobNextRunAtParams) (ScheduledJob, error) {
@@ -314,11 +315,11 @@ func (q *Queries) UpdateScheduledJobNextRunAt(ctx context.Context, arg UpdateSch
 		&i.Name,
 		&i.Description,
 		&i.JobType,
-		&i.Payload,
 		&i.CronExpression,
 		&i.NextRunAt,
+		&i.Payload,
+		&i.IsEnabled,
 		&i.LastRunAt,
-		&i.Enabled,
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,

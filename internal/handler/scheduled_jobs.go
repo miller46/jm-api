@@ -170,7 +170,7 @@ func (h *ScheduledJobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Payload:        payload,
 		CronExpression: req.CronExpression,
 		NextRunAt:      req.NextRunAt,
-		Enabled:        req.Enabled,
+		IsEnabled:      req.Enabled,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create scheduled job"})
@@ -212,7 +212,7 @@ func (h *ScheduledJobHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Payload:        existing.Payload,
 		CronExpression: existing.CronExpression,
 		NextRunAt:      existing.NextRunAt,
-		Enabled:        existing.Enabled,
+		IsEnabled:      existing.IsEnabled,
 	}
 
 	if req.Name != nil {
@@ -234,7 +234,7 @@ func (h *ScheduledJobHandler) Update(w http.ResponseWriter, r *http.Request) {
 		params.NextRunAt = req.NextRunAt
 	}
 	if req.Enabled != nil {
-		params.Enabled = *req.Enabled
+		params.IsEnabled = *req.Enabled
 	}
 
 	job, err := h.queries.UpdateScheduledJob(ctx, params)
@@ -279,7 +279,7 @@ func scheduledJobToResponse(job sqlc.ScheduledJob) ScheduledJobResponse {
 		CronExpression: job.CronExpression,
 		NextRunAt:      job.NextRunAt,
 		LastRunAt:      job.LastRunAt,
-		Enabled:        job.Enabled,
+		Enabled:        job.IsEnabled,
 		CreatedAt:      job.CreatedAt,
 		UpdatedAt:      job.UpdatedAt,
 	}

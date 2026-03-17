@@ -23,7 +23,7 @@ func NewPGScheduledJobStore(db pgxQuerier) scheduledJobStore {
 
 func (s *pgScheduledJobStore) CreateExecution(ctx context.Context, scheduledJobID string) (string, error) {
 	const q = `
-INSERT INTO scheduled_job_executions (scheduled_job_id, started_at)
+INSERT INTO scheduled_job_executions (job_id, started_at)
 VALUES ($1, NOW())
 RETURNING id`
 
