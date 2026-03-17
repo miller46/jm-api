@@ -21,8 +21,9 @@ func TestHerokuYMLDefinesContainerWebAndWorkerCommands(t *testing.T) {
 		"release:",
 		"migrate -path /migrations -database",
 		"run:",
-		"web: api",
-		"worker: worker",
+		"- api",
+		"- worker",
+		"image: web",
 	}
 
 	for _, snippet := range requiredSnippets {

@@ -6,5 +6,11 @@ release:
     - migrate -path /migrations -database $DATABASE_URL up
   image: web
 run:
-  web: api
-  worker: worker
+  web:
+    command:
+      - api
+    image: web
+  worker:
+    command:
+      - worker
+    image: web
