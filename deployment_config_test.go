@@ -19,8 +19,8 @@ func TestHerokuYMLDefinesContainerWebAndWorkerCommands(t *testing.T) {
 		"docker:",
 		"web: Dockerfile",
 		"run:",
-		"web: api",
-		"worker: worker",
+		"- api",
+		"- worker",
 	}
 
 	for _, snippet := range requiredSnippets {
