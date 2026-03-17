@@ -11,7 +11,7 @@ if [ -d /migrations ] && [ -n "$JM_API_DATABASE_URL" ]; then
     echo "migrations: $result"
   elif echo "$result" | grep -q "no change"; then
     echo "migrations: up to date"
-  elif echo "$result" | grep -q "dirty"; then
+  elif echo "$result" | grep -qi "dirty"; then
     echo "migrations: dirty state detected, clearing and retrying"
     # version prints "<number>" to stdout and "dirty" info to stderr
     dirty_ver=$(migrate -path /migrations -database "$JM_API_DATABASE_URL" version 2>/dev/null)
