@@ -173,7 +173,6 @@ SET name = COALESCE($2, name),
     cron_expression = COALESCE($6, cron_expression),
     next_run_at = COALESCE($7, next_run_at),
     enabled = COALESCE($8, enabled),
-    last_error = COALESCE($9, last_error),
     updated_at = NOW()
 WHERE id = $1
 RETURNING id, name, description, job_type, payload, cron_expression, next_run_at, last_run_at, enabled, last_error, created_at, updated_at
@@ -186,9 +185,8 @@ type UpdateScheduledJobParams struct {
 	JobType        string      `json:"job_type"`
 	Payload        []byte      `json:"payload"`
 	CronExpression string      `json:"cron_expression"`
-	NextRunAt      *time.Time  `json:"next_run_at"`
-	Enabled        bool        `json:"enabled"`
-	LastError      pgtype.Text `json:"last_error"`
+	NextRunAt      *time.Time `json:"next_run_at"`
+	Enabled        bool       `json:"enabled"`
 }
 
 func (q *Queries) UpdateScheduledJob(ctx context.Context, arg UpdateScheduledJobParams) (ScheduledJob, error) {
@@ -201,7 +199,6 @@ func (q *Queries) UpdateScheduledJob(ctx context.Context, arg UpdateScheduledJob
 		arg.CronExpression,
 		arg.NextRunAt,
 		arg.Enabled,
-		arg.LastError,
 	)
 	var i ScheduledJob
 	err := row.Scan(

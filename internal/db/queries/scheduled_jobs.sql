@@ -26,7 +26,6 @@ SET name = COALESCE($2, name),
     cron_expression = COALESCE($6, cron_expression),
     next_run_at = COALESCE($7, next_run_at),
     enabled = COALESCE($8, enabled),
-    last_error = COALESCE($9, last_error),
     updated_at = NOW()
 WHERE id = $1
 RETURNING id, name, description, job_type, payload, cron_expression, next_run_at, last_run_at, enabled, last_error, created_at, updated_at;

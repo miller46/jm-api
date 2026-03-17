@@ -60,7 +60,6 @@ type UpdateScheduledJobRequest struct {
 	CronExpression *string         `json:"cron_expression,omitempty" validate:"omitempty,max=100"`
 	NextRunAt      *time.Time      `json:"next_run_at,omitempty"`
 	Enabled        *bool           `json:"enabled,omitempty"`
-	LastError      *string         `json:"last_error,omitempty"`
 }
 
 func (h *ScheduledJobHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -214,7 +213,6 @@ func (h *ScheduledJobHandler) Update(w http.ResponseWriter, r *http.Request) {
 		CronExpression: existing.CronExpression,
 		NextRunAt:      existing.NextRunAt,
 		Enabled:        existing.Enabled,
-		LastError:      existing.LastError,
 	}
 
 	if req.Name != nil {
@@ -237,9 +235,6 @@ func (h *ScheduledJobHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Enabled != nil {
 		params.Enabled = *req.Enabled
-	}
-	if req.LastError != nil {
-		params.LastError = pgtype.Text{String: *req.LastError, Valid: *req.LastError != ""}
 	}
 
 	job, err := h.queries.UpdateScheduledJob(ctx, params)
