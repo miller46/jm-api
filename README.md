@@ -504,7 +504,7 @@ If Redis is configured but the connection fails at startup, the server falls bac
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JM_API_BOTS_WRITE_ADMIN_ONLY` | `false` | Restrict bot create/update/delete to admin users |
+| `JM_API_BOTS_WRITE_ADMIN_ONLY` | `true` | Restrict bot create/update/delete to admin users |
 | `JM_API_I_UNDERSTAND_RISK` | `false` | Set to `true` to allow non-admin bot writes in production |
 
 ### Circuit Breaker (Webhook Delivery)
@@ -591,7 +591,9 @@ The app deploys to Heroku automatically on every push to `main` via the CD workf
 
 **Running migrations in production:**
 
-Migrations are bundled in the Docker image at `/migrations`. Run them manually via Heroku:
+Migrations run automatically when the container starts. The entrypoint script runs `migrate up` and, if that fails for any reason, resets to a nil version with `force -1` and retries. This recovery strategy is safe because all migration files use `IF NOT EXISTS`.
+
+To run migrations manually (e.g. for debugging):
 
 ```sh
 heroku run "migrate -path /migrations -database \$DATABASE_URL up" -a <app-name>
@@ -599,7 +601,7 @@ heroku run "migrate -path /migrations -database \$DATABASE_URL up" -a <app-name>
 
 **Running the worker:**
 
-The worker runs as a separate process. On Heroku, add a `worker` dyno type in your `Procfile` or scale it manually:
+The worker is defined as a separate process type in `heroku.yml`. Scale it with:
 
 ```sh
 heroku ps:scale worker=1 -a <app-name>
