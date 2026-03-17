@@ -212,7 +212,7 @@ func (s *SchedulerService) processJob(ctx context.Context, job sqlc.ScheduledJob
 
 		if _, err := q.UpdateScheduledJobNextRunAt(ctx, sqlc.UpdateScheduledJobNextRunAtParams{
 			ID:        lockedJob.ID,
-			NextRunAt: nextRunAt,
+			NextRunAt: &nextRunAt,
 		}); err != nil {
 			return fmt.Errorf("updating next_run_at for scheduled job %s: %w", lockedJob.ID, err)
 		}
