@@ -103,6 +103,7 @@ func TestSchedulerProcessJob_InvalidCronSkipsEnqueue(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, queries.updateNextRunCalls)
 	assert.Equal(t, 0, queries.createTaskCalls)
+	assert.False(t, transactor.commitCalled)
 }
 
 func TestSchedulerProcessJob_EnqueueFailureReturnsError(t *testing.T) {

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -18,6 +19,8 @@ const (
 	defaultSchedulerQueryLimit          = 10
 	defaultSchedulerWorkerPoolSize      = 5
 )
+
+var errInvalidCronExpression = errors.New("invalid cron expression")
 
 type SchedulerConfig struct {
 	PollIntervalSeconds int
@@ -190,16 +193,16 @@ func (s *SchedulerService) pollOnce(ctx context.Context) {
 }
 
 func (s *SchedulerService) processJob(ctx context.Context, job sqlc.ScheduledJob) error {
-	return s.transactor.InTx(ctx, func(q schedulerQueries) error {
+	err := s.transactor.InTx(ctx, func(q schedulerQueries) error {
 		lockedJob, err := q.GetScheduledJobForUpdate(ctx, job.ID)
 		if err != nil {
 			return fmt.Errorf("locking scheduled job %s: %w", job.ID, err)
 		}
 
-		nextRunAt, err := calculateNextRunAt(lockedJob.CronExpression, time.Now().UTC())
+		nextRunAt, err := calculateNextRunAt(lockedJob.CronExpression, lockedJob.NextRunAt.UTC())
 		if err != nil {
 			slog.Warn("failed to calculate next run time", "job_id", lockedJob.ID, "job_name", lockedJob.Name, "error", err)
-			return nil
+			return errInvalidCronExpression
 		}
 
 		if _, err := q.UpdateScheduledJobNextRunAt(ctx, sqlc.UpdateScheduledJobNextRunAtParams{
@@ -219,13 +222,18 @@ func (s *SchedulerService) processJob(ctx context.Context, job sqlc.ScheduledJob
 		}
 
 		slog.Info("Scheduled job discovered",
-			"message", fmt.Sprintf("Scheduled job '%s' (id: %s) discovered, next run at %s", lockedJob.Name, lockedJob.ID, nextRunAt.Format(time.RFC3339)),
 			"job_name", lockedJob.Name,
 			"job_id", lockedJob.ID,
 			"next_run_at", nextRunAt,
 		)
 		return nil
 	})
+
+	if errors.Is(err, errInvalidCronExpression) {
+		return nil
+	}
+
+	return err
 }
 
 func calculateNextRunAt(cronExpression string, from time.Time) (time.Time, error) {
