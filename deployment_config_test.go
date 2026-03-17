@@ -60,6 +60,10 @@ func TestEntrypointRunsMigrations(t *testing.T) {
 		t.Fatalf("entrypoint.sh must run migrations")
 	}
 
+	if !strings.Contains(text, "force -1") {
+		t.Fatalf("entrypoint.sh must reset to nil version on failure (force -1)")
+	}
+
 	if !strings.Contains(text, `exec "$@"`) {
 		t.Fatalf("entrypoint.sh must exec the CMD argument")
 	}

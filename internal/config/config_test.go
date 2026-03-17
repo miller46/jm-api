@@ -44,6 +44,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 60*time.Second, cfg.RequestTimeoutWebhook)
 	assert.Equal(t, 5*time.Second, cfg.RequestTimeoutAuth)
 	assert.Equal(t, 2*time.Second, cfg.RequestTimeoutHealth)
+	assert.Equal(t, 5, cfg.DBExpectedMigration)
 	assert.False(t, cfg.RedisRequired)
 	assert.Equal(t, 10, cfg.WorkerMaxConcurrency)
 	assert.Equal(t, 10, cfg.WorkerMaxPerPoll)
