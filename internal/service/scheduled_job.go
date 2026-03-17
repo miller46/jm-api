@@ -29,7 +29,10 @@ type JobExecutor interface {
 	Execute(ctx context.Context, payload json.RawMessage) error
 }
 
-var jobRegistry = map[string]JobExecutor{}
+var (
+	jobRegistryMu sync.RWMutex
+	jobRegistry   = map[string]JobExecutor{}
+)
 
 var (
 	scheduledJobStoreMu sync.RWMutex
@@ -37,6 +40,17 @@ var (
 	randIntn            = rand.Intn
 	sleepFn             = time.Sleep
 )
+
+func RegisterJobExecutor(name string, executor JobExecutor) {
+	jobRegistryMu.Lock()
+	defer jobRegistryMu.Unlock()
+
+	if executor == nil {
+		delete(jobRegistry, name)
+		return
+	}
+	jobRegistry[name] = executor
+}
 
 func SetScheduledJobStore(store scheduledJobStore) {
 	scheduledJobStoreMu.Lock()
@@ -59,8 +73,7 @@ func ExecuteScheduledJob(ctx context.Context, payload ScheduledJobPayload) (err 
 		return errors.New("scheduled job store is not configured")
 	}
 
-	slog.Info("Executing scheduled job", "name", payload.Name, "job_id", payload.JobID)
-	slog.Info("Job payload", "payload", string(payload.Payload))
+	slog.Info("Executing scheduled job", "name", payload.Name, "job_id", payload.JobID, "payload", string(payload.Payload))
 
 	executionID, err := store.CreateExecution(ctx, payload.JobID)
 	if err != nil {
@@ -97,13 +110,14 @@ func ExecuteScheduledJob(ctx context.Context, payload ScheduledJobPayload) (err 
 		slog.Error("Job failed", "name", payload.Name, "job_id", payload.JobID, "error", err)
 	}()
 
-	if executor, ok := jobRegistry[payload.Name]; ok {
+	if executor, ok := getJobExecutor(payload.Name); ok {
 		if execErr := executor.Execute(ctx, payload.Payload); execErr != nil {
 			return fmt.Errorf("executing job %s: %w", payload.Name, execErr)
 		}
 		return nil
 	}
 
+	// TODO(issue-195): remove this fallback once all scheduled job types have concrete executors.
 	sleepDuration := time.Duration(1+randIntn(2)) * time.Second
 	sleepFn(sleepDuration)
 	return nil
@@ -113,4 +127,17 @@ func getScheduledJobStore() scheduledJobStore {
 	scheduledJobStoreMu.RLock()
 	defer scheduledJobStoreMu.RUnlock()
 	return scheduledStore
+}
+
+func getJobExecutor(name string) (JobExecutor, bool) {
+	jobRegistryMu.RLock()
+	defer jobRegistryMu.RUnlock()
+	executor, ok := jobRegistry[name]
+	return executor, ok
+}
+
+func clearJobRegistry() {
+	jobRegistryMu.Lock()
+	defer jobRegistryMu.Unlock()
+	jobRegistry = map[string]JobExecutor{}
 }

@@ -95,12 +95,10 @@ func TestExecuteScheduledJob_Failure(t *testing.T) {
 		SetScheduledJobStore(nil)
 	})
 
-	jobRegistry = map[string]JobExecutor{
-		"failing_job": jobExecutorFunc(func(context.Context, json.RawMessage) error {
-			return errors.New("boom")
-		}),
-	}
-	t.Cleanup(func() { jobRegistry = map[string]JobExecutor{} })
+	RegisterJobExecutor("failing_job", jobExecutorFunc(func(context.Context, json.RawMessage) error {
+		return errors.New("boom")
+	}))
+	t.Cleanup(clearJobRegistry)
 
 	err := ExecuteScheduledJob(context.Background(), ScheduledJobPayload{
 		JobID:   "job_1",
@@ -123,12 +121,10 @@ func TestExecuteScheduledJob_PanicRecovery(t *testing.T) {
 		SetScheduledJobStore(nil)
 	})
 
-	jobRegistry = map[string]JobExecutor{
-		"panic_job": jobExecutorFunc(func(context.Context, json.RawMessage) error {
-			panic("kaboom")
-		}),
-	}
-	t.Cleanup(func() { jobRegistry = map[string]JobExecutor{} })
+	RegisterJobExecutor("panic_job", jobExecutorFunc(func(context.Context, json.RawMessage) error {
+		panic("kaboom")
+	}))
+	t.Cleanup(clearJobRegistry)
 
 	err := ExecuteScheduledJob(context.Background(), ScheduledJobPayload{JobID: "job_1", Name: "panic_job"})
 	require.Error(t, err)
