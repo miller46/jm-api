@@ -3,6 +3,8 @@ build:
     web: Dockerfile
 release:
   command:
+    - sh
+    - -c
     - migrate -path /migrations -database $DATABASE_URL up
   image: web
 run:
