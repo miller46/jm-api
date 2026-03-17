@@ -7,10 +7,6 @@ release:
   image: web
 run:
   web:
-    command:
-      - api
-    image: web
+    - api
   worker:
-    command:
-      - worker
-    image: web
+    - worker
