@@ -257,7 +257,7 @@ func (s *Server) setupRoutes() {
 	botH := handler.NewBotHandler(s.queries, s.webhookSvc)
 	webhookH := handler.NewWebhookHandler(s.queries, s.webhookSvc)
 	taskH := handler.NewTaskHandler(s.queries)
-	scheduledJobH := handler.NewScheduledJobHandler(s.queries)
+	scheduledJobH := handler.NewScheduledJobHandler(s.queries, s.db)
 
 	// Auth middleware
 	authMW := middleware.Auth(cfg.JWTSigningKeys)
@@ -318,6 +318,7 @@ func (s *Server) setupRoutes() {
 				r.Get("/{id}", scheduledJobH.Get)
 				r.Patch("/{id}", scheduledJobH.Update)
 				r.Delete("/{id}", scheduledJobH.Delete)
+				r.Post("/{id}/run-now", scheduledJobH.RunNow)
 			})
 		})
 

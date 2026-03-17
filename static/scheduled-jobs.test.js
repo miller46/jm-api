@@ -66,6 +66,8 @@ function runTests() {
 // ============================================================================
 
 function isValidCron(cron) {
+  if (!cron || typeof cron !== 'string') return false;
+  
   var parts = cron.trim().split(/\s+/);
   if (parts.length !== 5) {
     return false;
@@ -453,6 +455,58 @@ test('handles empty string', function() {
 
 test('handles number', function() {
   assertEqual(escapeHtml(123), '123');
+});
+
+// ============================================================================
+// Cron Builder Tests
+// ============================================================================
+
+test('accepts valid cron with spaces', function() {
+  assertTrue(isValidCron('  0   2   *   *   *  '), 'Should accept cron with extra spaces');
+});
+
+test('rejects empty cron string', function() {
+  assertFalse(isValidCron(''), 'Should reject empty string');
+});
+
+test('rejects null cron', function() {
+  assertFalse(isValidCron(null), 'Should reject null');
+});
+
+test('rejects undefined cron', function() {
+  assertFalse(isValidCron(undefined), 'Should reject undefined');
+});
+
+test('validates step with range (0 9-17/2 * * *)', function() {
+  assertTrue(isValidCron('0 9-17/2 * * *'), 'Should accept step with range');
+});
+
+test('rejects invalid step value (*/0)', function() {
+  assertFalse(isValidCron('*/0 * * * *'), 'Should reject step of 0');
+});
+
+test('validates complex business hours cron', function() {
+  assertTrue(isValidCron('0 9-17 * * 1-5'), 'Should accept business hours pattern');
+});
+
+test('validates multiple values in list', function() {
+  assertTrue(isValidCron('0 9,12,15,18 * * *'), 'Should accept multiple list values');
+});
+
+test('describes every hour at minute 0', function() {
+  assertEqual(getCronDescription('0 * * * *'), 'Every hour at minute 0');
+});
+
+test('formatTime handles 11:59 PM correctly', function() {
+  assertEqual(formatTime(23, 59), '11:59 PM');
+});
+
+test('formatTime handles 12:00 AM correctly', function() {
+  assertEqual(formatTime(0, 0), '12:00 AM');
+});
+
+test('formatTime handles 12:00 PM correctly', function() {
+  assertEqual(formatTime(12, 0), '12:00 PM');
 });
 
 // ============================================================================

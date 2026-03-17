@@ -16,6 +16,14 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 )
 
+// IntegrationTest marks a test as an integration test and skips if not running integration tests
+func IntegrationTest(t *testing.T) {
+	t.Helper()
+	if os.Getenv("INTEGRATION_TESTS") == "" {
+		t.Skip("skipping integration test: set INTEGRATION_TESTS=1 to run")
+	}
+}
+
 func SetupTestPostgres(t *testing.T) (*pgxpool.Pool, func()) {
 	t.Helper()
 
@@ -73,6 +81,7 @@ func applySchema(ctx context.Context, pool *pgxpool.Pool) error {
 		"000002_failed_tasks.up.sql",
 		"000003_tasks_retry_count_index.up.sql",
 		"000004_scheduled_jobs.up.sql",
+		"000005_scheduled_jobs_soft_delete.up.sql",
 	}
 
 	for _, migration := range migrations {
@@ -88,4 +97,11 @@ func applySchema(ctx context.Context, pool *pgxpool.Pool) error {
 	}
 
 	return nil
+}
+
+// SetupTestDB is a convenience wrapper that returns just the pool and calls cleanup via t.Cleanup
+func SetupTestDB(t *testing.T) *pgxpool.Pool {
+	pool, cleanup := SetupTestPostgres(t)
+	t.Cleanup(cleanup)
+	return pool
 }
