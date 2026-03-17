@@ -18,6 +18,8 @@ func TestHerokuYMLDefinesContainerWebAndWorkerCommands(t *testing.T) {
 		"build:",
 		"docker:",
 		"web: Dockerfile",
+		"release:",
+		"migrate -path /migrations -database",
 		"run:",
 		"- api",
 		"- worker",

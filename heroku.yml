@@ -1,6 +1,10 @@
 build:
   docker:
     web: Dockerfile
+release:
+  command:
+    - migrate -path /migrations -database $DATABASE_URL up
+  image: web
 run:
   web:
     command:

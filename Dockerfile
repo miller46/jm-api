@@ -14,6 +14,9 @@ FROM alpine:3.20
 
 RUN apk --no-cache add ca-certificates tzdata curl
 
+RUN curl -L https://github.com/golang-migrate/migrate/releases/download/v4.17.0/migrate.linux-amd64.tar.gz | tar xz \
+    && mv migrate /usr/local/bin/migrate
+
 COPY --from=builder /api /usr/local/bin/api
 COPY --from=builder /worker /usr/local/bin/worker
 COPY --from=builder /app/internal/db/migrate /migrations

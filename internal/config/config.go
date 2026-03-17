@@ -144,7 +144,7 @@ func Load() (*Config, error) {
 
 		DatabaseURL:                os.Getenv("JM_API_DATABASE_URL"),
 		DBMigrationCheckEnabled:    envBool("JM_API_DB_MIGRATION_CHECK_ENABLED", true),
-		DBExpectedMigration:        envInt("JM_API_DB_EXPECTED_MIGRATION", 1),
+		DBExpectedMigration:        envInt("JM_API_DB_EXPECTED_MIGRATION", 4),
 		DBPoolMaxConns:             envIntFromKeys([]string{"JM_API_DB_POOL_MAX_CONNS", "DB_POOL_MAX_CONNS"}, 20),
 		DBPoolMinConns:             envIntFromKeys([]string{"JM_API_DB_POOL_MIN_CONNS", "DB_POOL_MIN_CONNS"}, 2),
 		DBConnectRetryEnabled:      envBool("JM_API_DB_CONNECT_RETRY_ENABLED", true),
