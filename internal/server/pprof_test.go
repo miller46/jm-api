@@ -30,13 +30,24 @@ func TestRegisterPprofRoutes_RequiresAdmin(t *testing.T) {
 	r := chi.NewRouter()
 	registerPprofRoutes(r, middleware.Auth([]string{testJWTKey}))
 
-	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil)
-	req.Header.Set("Authorization", "Bearer "+newAccessToken(t, false))
-	res := httptest.NewRecorder()
+	paths := []string{
+		"/debug/pprof/",
+		"/debug/pprof/heap",
+		"/debug/pprof/goroutine",
+		"/debug/pprof/profile?seconds=1",
+	}
 
-	r.ServeHTTP(res, req)
+	for _, path := range paths {
+		t.Run(path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("Authorization", "Bearer "+newAccessToken(t, false))
+			res := httptest.NewRecorder()
 
-	assert.Equal(t, http.StatusForbidden, res.Code)
+			r.ServeHTTP(res, req)
+
+			assert.Equal(t, http.StatusForbidden, res.Code)
+		})
+	}
 }
 
 func TestRegisterPprofRoutes_ExposesProfilesForAdmin(t *testing.T) {

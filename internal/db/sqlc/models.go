@@ -34,15 +34,28 @@ type FailedTask struct {
 }
 
 type ScheduledJob struct {
-	ID             string    `json:"id"`
-	Name           string    `json:"name"`
-	TaskType       string    `json:"task_type"`
-	TaskPayload    []byte    `json:"task_payload"`
-	CronExpression string    `json:"cron_expression"`
-	NextRunAt      time.Time `json:"next_run_at"`
-	IsEnabled      bool      `json:"is_enabled"`
-	CreateAt       time.Time `json:"create_at"`
-	LastUpdateAt   time.Time `json:"last_update_at"`
+	ID             pgtype.UUID     `json:"id"`
+	Name           string          `json:"name"`
+	Description    pgtype.Text     `json:"description"`
+	JobType        string          `json:"job_type"`
+	CronExpression string          `json:"cron_expression"`
+	NextRunAt      *time.Time      `json:"next_run_at"`
+	Payload        json.RawMessage `json:"payload"`
+	IsEnabled      bool            `json:"is_enabled"`
+	LastRunAt      *time.Time      `json:"last_run_at"`
+	LastError      pgtype.Text     `json:"last_error"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
+}
+
+type ScheduledJobExecution struct {
+	ID           pgtype.UUID `json:"id"`
+	JobID        pgtype.UUID `json:"job_id"`
+	StartedAt    time.Time   `json:"started_at"`
+	CompletedAt  *time.Time  `json:"completed_at"`
+	Success      pgtype.Bool `json:"success"`
+	Output       pgtype.Text `json:"output"`
+	ErrorMessage pgtype.Text `json:"error_message"`
 }
 
 type SessionToken struct {

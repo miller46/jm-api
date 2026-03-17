@@ -10,6 +10,7 @@ import (
 
 	"github.com/jack/jm-api-go/internal/db/sqlc"
 	"github.com/jack/jm-api-go/internal/model"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/robfig/cron/v3"
 )
@@ -30,7 +31,7 @@ type SchedulerConfig struct {
 
 type schedulerQueries interface {
 	PickDueScheduledJobs(ctx context.Context, limit int32) ([]sqlc.ScheduledJob, error)
-	GetScheduledJobForUpdate(ctx context.Context, id string) (sqlc.ScheduledJob, error)
+	GetScheduledJobForUpdate(ctx context.Context, id pgtype.UUID) (sqlc.ScheduledJob, error)
 	UpdateScheduledJobNextRunAt(ctx context.Context, arg sqlc.UpdateScheduledJobNextRunAtParams) (sqlc.ScheduledJob, error)
 	CreateTask(ctx context.Context, arg sqlc.CreateTaskParams) (sqlc.Task, error)
 }
@@ -199,6 +200,10 @@ func (s *SchedulerService) processJob(ctx context.Context, job sqlc.ScheduledJob
 			return fmt.Errorf("locking scheduled job %s: %w", job.ID, err)
 		}
 
+		if lockedJob.NextRunAt == nil {
+			return fmt.Errorf("scheduled job %s has nil next_run_at", lockedJob.ID)
+		}
+
 		nextRunAt, err := calculateNextRunAt(lockedJob.CronExpression, lockedJob.NextRunAt.UTC())
 		if err != nil {
 			slog.Warn("failed to calculate next run time", "job_id", lockedJob.ID, "job_name", lockedJob.Name, "error", err)
@@ -207,15 +212,15 @@ func (s *SchedulerService) processJob(ctx context.Context, job sqlc.ScheduledJob
 
 		if _, err := q.UpdateScheduledJobNextRunAt(ctx, sqlc.UpdateScheduledJobNextRunAtParams{
 			ID:        lockedJob.ID,
-			NextRunAt: nextRunAt,
+			NextRunAt: &nextRunAt,
 		}); err != nil {
 			return fmt.Errorf("updating next_run_at for scheduled job %s: %w", lockedJob.ID, err)
 		}
 
 		if _, err := q.CreateTask(ctx, sqlc.CreateTaskParams{
 			ID:      model.GenerateID(),
-			Type:    lockedJob.TaskType,
-			Payload: lockedJob.TaskPayload,
+			Type:    lockedJob.JobType,
+			Payload: lockedJob.Payload,
 		}); err != nil {
 			slog.Error("failed to enqueue job to task queue", "job_id", lockedJob.ID, "job_name", lockedJob.Name, "error", err)
 			return fmt.Errorf("enqueue task for scheduled job %s: %w", lockedJob.ID, err)

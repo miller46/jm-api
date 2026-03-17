@@ -3,148 +3,490 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scheduled Jobs - Admin Dashboard</title>
+  <title>Scheduled Jobs Calendar</title>
   <link rel="stylesheet" href="style.css">
+  <style>
+    /* Calendar-specific styles */
+    .calendar-container {
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-top: 1rem;
+    }
+
+    .calendar-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .calendar-title {
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin: 0;
+    }
+
+    .calendar-nav {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 1px;
+      background: #dee2e6;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .calendar-day-header {
+      background: #e9ecef;
+      padding: 0.75rem 0.5rem;
+      text-align: center;
+      font-weight: 600;
+      font-size: 0.875rem;
+    }
+
+    .calendar-day {
+      background: #fff;
+      min-height: 100px;
+      padding: 0.5rem;
+      position: relative;
+    }
+
+    .calendar-day.other-month {
+      background: #f8f9fa;
+      color: #6c757d;
+    }
+
+    .calendar-day.today {
+      background: #e7f3ff;
+    }
+
+    .calendar-day-number {
+      font-weight: 500;
+      margin-bottom: 0.25rem;
+    }
+
+    .calendar-jobs {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+
+    .calendar-job {
+      padding: 0.25rem 0.5rem;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: opacity 0.15s;
+    }
+
+    .calendar-job:hover {
+      opacity: 0.8;
+    }
+
+    .calendar-job.enabled {
+      background: #d4edda;
+      color: #155724;
+      border-left: 3px solid #28a745;
+    }
+
+    .calendar-job.disabled {
+      background: #f8d7da;
+      color: #721c24;
+      border-left: 3px solid #dc3545;
+    }
+
+    .calendar-job.failed {
+      background: #fff3cd;
+      color: #856404;
+      border-left: 3px solid #ffc107;
+    }
+
+    /* Tooltip */
+    .job-tooltip {
+      position: absolute;
+      background: #333;
+      color: #fff;
+      padding: 0.5rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.875rem;
+      z-index: 1000;
+      max-width: 250px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+
+    .job-tooltip.visible {
+      opacity: 1;
+    }
+
+    .job-tooltip-title {
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+    }
+
+    .job-tooltip-time {
+      font-size: 0.8rem;
+      color: #adb5bd;
+    }
+
+    /* Filters panel */
+    .filters-panel {
+      background: #fff;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .filters-row {
+      display: flex;
+      gap: 1rem;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .filter-group {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .filter-group label {
+      font-weight: 500;
+      font-size: 0.9rem;
+    }
+
+    .filter-group input[type="text"] {
+      padding: 0.375rem 0.75rem;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+
+    .filter-group input[type="checkbox"] {
+      width: 1.1rem;
+      height: 1.1rem;
+    }
+
+    .filter-group select {
+      padding: 0.375rem 0.75rem;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      font-size: 0.9rem;
+    }
+
+    /* Legend */
+    .calendar-legend {
+      display: flex;
+      gap: 1.5rem;
+      margin-top: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.875rem;
+    }
+
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 2px;
+    }
+
+    .legend-dot.enabled { background: #28a745; }
+    .legend-dot.disabled { background: #dc3545; }
+    .legend-dot.failed { background: #ffc107; }
+
+    /* Actions bar */
+    .actions-bar {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+
+    /* Modal styles */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s, visibility 0.2s;
+    }
+
+    .modal-overlay.visible {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .modal {
+      background: #fff;
+      border-radius: 8px;
+      width: 90%;
+      max-width: 500px;
+      max-height: 90vh;
+      overflow-y: auto;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    }
+
+    .modal-header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid #dee2e6;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-title {
+      margin: 0;
+      font-size: 1.25rem;
+    }
+
+    .modal-close {
+      background: none;
+      border: none;
+      font-size: 1.5rem;
+      cursor: pointer;
+      color: #6c757d;
+    }
+
+    .modal-close:hover {
+      color: #333;
+    }
+
+    .modal-body {
+      padding: 1.5rem;
+    }
+
+    .modal-footer {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid #dee2e6;
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+    }
+
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 3rem 2rem;
+      color: #6c757d;
+    }
+
+    .empty-state-icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+    }
+
+    /* Skeleton loader */
+    .skeleton-calendar {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 1px;
+      background: #dee2e6;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .skeleton-day {
+      background: #fff;
+      min-height: 100px;
+      padding: 0.5rem;
+    }
+
+    .skeleton-day-header {
+      background: #e9ecef;
+      padding: 0.75rem 0.5rem;
+    }
+
+    .skeleton-line {
+      height: 12px;
+      background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 2px;
+      margin-bottom: 0.5rem;
+    }
+
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .calendar-day {
+        min-height: 60px;
+        padding: 0.25rem;
+      }
+
+      .calendar-job {
+        font-size: 0.65rem;
+        padding: 0.125rem 0.25rem;
+      }
+
+      .calendar-day-header {
+        font-size: 0.75rem;
+        padding: 0.5rem 0.25rem;
+      }
+    }
+  </style>
 </head>
 <body>
   <header class="auth-header">
-    <h1>Scheduled Jobs</h1>
+    <h1>Scheduled Jobs Calendar</h1>
     <div class="auth-controls">
       <span class="user-email" id="user-email"></span>
       <button class="btn-logout" id="logout-btn">Logout</button>
     </div>
   </header>
 
-  <main id="scheduled-jobs-page">
-    <div class="page-actions">
-      <a href="index.html" class="btn btn-secondary">&larr; Back to Dashboard</a>
-      <button id="create-job-btn" class="btn btn-primary">+ Create Job</button>
+  <main>
+    <div class="dashboard-actions">
+      <a href="index.html" class="btn btn-secondary">← Back to dashboard</a>
+      <button id="new-job-btn" class="btn btn-primary">+ New Job</button>
+      <button id="refresh-btn" class="btn btn-secondary">↻ Refresh</button>
     </div>
 
-    <div id="loading" class="loading" style="display: block;">
-      Loading scheduled jobs...
-    </div>
-
-    <div id="error" class="error" style="display: none;"></div>
-
-    <div id="jobs-container" class="jobs-container" style="display: none;">
-      <div class="table-wrapper">
-        <div class="table-scroll-container">
-          <table id="jobs-table">
-            <thead id="table-head"></thead>
-            <tbody id="table-body"></tbody>
-          </table>
+    <div class="filters-panel">
+      <div class="filters-row">
+        <div class="filter-group">
+          <label for="search-input">Search:</label>
+          <input type="text" id="search-input" placeholder="Filter by name...">
+        </div>
+        <div class="filter-group">
+          <label for="status-filter">Status:</label>
+          <select id="status-filter">
+            <option value="all">All</option>
+            <option value="enabled">Enabled</option>
+            <option value="disabled">Disabled</option>
+            <option value="failed">Failed</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <input type="checkbox" id="hide-disabled" checked>
+          <label for="hide-disabled">Hide disabled jobs</label>
         </div>
       </div>
-      <div id="empty-state" class="empty-state" style="display: none;">
-        <p>No scheduled jobs found. Create your first job to get started.</p>
+    </div>
+
+    <div id="loading" class="loading" style="display: none;">Loading...</div>
+    <div id="error" class="error" style="display:none;"></div>
+
+    <div id="calendar-container" class="calendar-container">
+      <div class="calendar-header">
+        <h2 id="calendar-title" class="calendar-title">March 2025</h2>
+        <div class="calendar-nav">
+          <button id="prev-month" class="btn btn-secondary">‹ Prev</button>
+          <button id="today-btn" class="btn btn-secondary">Today</button>
+          <button id="next-month" class="btn btn-secondary">Next ›</button>
+        </div>
       </div>
+
+      <div id="calendar-grid" class="calendar-grid">
+        <!-- Calendar will be rendered here -->
+      </div>
+
+      <div class="calendar-legend">
+        <div class="legend-item">
+          <div class="legend-dot enabled"></div>
+          <span>Enabled</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot disabled"></div>
+          <span>Disabled</span>
+        </div>
+        <div class="legend-item">
+          <div class="legend-dot failed"></div>
+          <span>Has Failures</span>
+        </div>
+      </div>
+    </div>
+
+    <div id="empty-state" class="empty-state" style="display: none;">
+      <div class="empty-state-icon">🗓️</div>
+      <h3>No scheduled jobs yet</h3>
+      <p>Create your first job to see it on the calendar.</p>
+      <button id="empty-create-btn" class="btn btn-primary">Create First Job</button>
     </div>
   </main>
 
-  <!-- Job Modal -->
-  <div id="job-modal" class="modal" style="display: none;">
-    <div class="modal-overlay"></div>
-    <div class="modal-content">
-      <div class="modal-header">
-        <h2 id="modal-title">Create Scheduled Job</h2>
-        <button class="modal-close" id="modal-close-btn" aria-label="Close">&times;</button>
-      </div>
-      <form id="job-form">
-        <div class="modal-body">
-          <input type="hidden" id="job-id" name="id">
-
-          <!-- Name Field -->
-          <div class="form-group">
-            <label for="job-name">Job Name <span class="required">*</span></label>
-            <input type="text" id="job-name" name="name" placeholder="Daily Analytics Report" maxlength="255">
-            <span class="field-error" id="name-error"></span>
-          </div>
-
-          <!-- Description Field -->
-          <div class="form-group">
-            <label for="job-description">Description (Optional)</label>
-            <textarea id="job-description" name="description" rows="3" placeholder="What does this job do?"></textarea>
-            <span class="field-error" id="description-error"></span>
-          </div>
-
-          <!-- Cron Expression Field -->
-          <div class="form-group">
-            <label for="job-cron">
-              Cron Expression <span class="required">*</span>
-              <a href="https://crontab.guru" target="_blank" rel="noopener" class="help-link" title="Open crontab.guru reference">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10"></circle>
-                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
-                </svg>
-              </a>
-            </label>
-            <input type="text" id="job-cron" name="cron_expression" placeholder="0 2 * * *">
-            <span class="field-error" id="cron-error"></span>
-            
-            <!-- Cron Helper -->
-            <div id="cron-helper" class="cron-helper" style="display: none;">
-              <div class="cron-status" id="cron-status"></div>
-              <div class="cron-human-readable" id="cron-human-readable"></div>
-              <div class="cron-next-runs" id="cron-next-runs"></div>
-            </div>
-          </div>
-
-          <!-- Payload Field -->
-          <div class="form-group">
-            <label for="job-payload">Payload (JSON)</label>
-            <textarea id="job-payload" name="payload" rows="6" placeholder="{}" spellcheck="false">{}</textarea>
-            <span class="field-error" id="payload-error"></span>
-          </div>
-
-          <!-- Enabled Toggle -->
-          <div class="form-group form-group-toggle">
-            <label class="toggle-label">
-              <input type="checkbox" id="job-enabled" name="enabled" checked>
-              <span class="toggle-switch"></span>
-              <span class="toggle-text">Enabled</span>
-            </label>
-          </div>
-        </div>
-
-        <div class="modal-footer" id="modal-footer-create">
-          <button type="button" class="btn btn-secondary" id="cancel-btn">Cancel</button>
-          <button type="button" class="btn btn-secondary" id="create-run-btn">Create & Run Now</button>
-          <button type="submit" class="btn btn-primary" id="submit-btn">Create Job</button>
-        </div>
-
-        <div class="modal-footer" id="modal-footer-edit" style="display: none;">
-          <button type="button" class="btn btn-secondary" id="cancel-btn-edit">Cancel</button>
-          <button type="button" class="btn btn-danger" id="delete-btn">Delete</button>
-          <button type="button" class="btn btn-secondary" id="run-now-btn">Run Now</button>
-          <button type="submit" class="btn btn-primary" id="save-btn">Save Changes</button>
-        </div>
-      </form>
-    </div>
+  <!-- Tooltip -->
+  <div id="job-tooltip" class="job-tooltip">
+    <div class="job-tooltip-title"></div>
+    <div class="job-tooltip-time"></div>
   </div>
 
-  <!-- Delete Confirmation Modal -->
-  <div id="delete-modal" class="modal modal-small" style="display: none;">
-    <div class="modal-overlay"></div>
-    <div class="modal-content">
+  <!-- Job Modal -->
+  <div id="job-modal" class="modal-overlay">
+    <div class="modal">
       <div class="modal-header">
-        <h2>Delete Scheduled Job</h2>
-        <button class="modal-close" id="delete-modal-close">&times;</button>
+        <h3 id="modal-title" class="modal-title">Job Details</h3>
+        <button class="modal-close" id="modal-close">×</button>
       </div>
       <div class="modal-body">
-        <p>Are you sure you want to delete <strong id="delete-job-name"></strong>?</p>
-        <p class="text-muted">This action cannot be undone.</p>
+        <form id="job-form">
+          <div class="form-group">
+            <label for="job-name">Name *</label>
+            <input type="text" id="job-name" name="name" required>
+          </div>
+          <div class="form-group">
+            <label for="job-description">Description</label>
+            <input type="text" id="job-description" name="description">
+          </div>
+          <div class="form-group">
+            <label for="job-type">Job Type *</label>
+            <input type="text" id="job-type" name="job_type" required>
+          </div>
+          <div class="form-group">
+            <label for="job-cron">Cron Expression *</label>
+            <input type="text" id="job-cron" name="cron_expression" placeholder="0 0 * * *" required>
+          </div>
+          <div class="form-group">
+            <label for="job-next-run">Next Run At</label>
+            <input type="datetime-local" id="job-next-run" name="next_run_at">
+          </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="job-enabled" name="enabled" checked>
+              Enabled
+            </label>
+          </div>
+        </form>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" id="delete-cancel-btn">Cancel</button>
-        <button type="button" class="btn btn-danger" id="delete-confirm-btn">Delete</button>
+        <button id="modal-cancel" class="btn btn-secondary">Cancel</button>
+        <button id="modal-save" class="btn btn-primary">Save</button>
+        <button id="modal-delete" class="btn btn-danger" style="display: none;">Delete</button>
       </div>
     </div>
   </div>
-
-  <!-- Toast Container -->
-  <div id="toast-container" class="toast-container"></div>
 
   <script src="app.js"></script>
   <script src="scheduled-jobs.js"></script>

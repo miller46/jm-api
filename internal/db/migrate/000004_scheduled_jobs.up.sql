@@ -1,25 +1,26 @@
+-- Migration to create scheduled jobs tables
 CREATE TABLE IF NOT EXISTS scheduled_jobs (
-    id VARCHAR(32) PRIMARY KEY,
-    name VARCHAR(255) NOT NULL,
-    task_type VARCHAR(128) NOT NULL,
-    task_payload JSONB,
-    cron_expression VARCHAR(128) NOT NULL,
-    next_run_at TIMESTAMPTZ NOT NULL,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL UNIQUE,
+    description TEXT,
+    job_type VARCHAR(100) NOT NULL,
+    cron_expression VARCHAR(255) NOT NULL,
+    next_run_at TIMESTAMPTZ,
+    payload JSONB NOT NULL DEFAULT '{}',
     is_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     last_run_at TIMESTAMPTZ,
     last_error TEXT,
-    create_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_update_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_due ON scheduled_jobs (next_run_at) WHERE is_enabled = TRUE;
-CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled ON scheduled_jobs (is_enabled);
-CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_name ON scheduled_jobs (name);
-CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_last_run_at ON scheduled_jobs (last_run_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_next_run_at ON scheduled_jobs(next_run_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled ON scheduled_jobs(is_enabled);
+CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_next_run_enabled ON scheduled_jobs(next_run_at, is_enabled);
 
 CREATE TABLE IF NOT EXISTS scheduled_job_executions (
-    id VARCHAR(32) PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
-    scheduled_job_id VARCHAR(32) NOT NULL REFERENCES scheduled_jobs(id) ON DELETE CASCADE,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL REFERENCES scheduled_jobs(id) ON DELETE CASCADE,
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     success BOOLEAN,
@@ -27,5 +28,5 @@ CREATE TABLE IF NOT EXISTS scheduled_job_executions (
     error_message TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_scheduled_job_executions_scheduled_job_id ON scheduled_job_executions (scheduled_job_id);
-CREATE INDEX IF NOT EXISTS idx_scheduled_job_executions_started_at ON scheduled_job_executions (started_at);
+CREATE INDEX IF NOT EXISTS idx_job_executions_job_id ON scheduled_job_executions(job_id);
+CREATE INDEX IF NOT EXISTS idx_job_executions_started_at ON scheduled_job_executions(started_at);

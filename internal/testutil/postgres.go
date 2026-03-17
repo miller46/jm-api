@@ -68,14 +68,23 @@ func SetupTestPostgres(t *testing.T) (*pgxpool.Pool, func()) {
 }
 
 func applySchema(ctx context.Context, pool *pgxpool.Pool) error {
-	migrationPath := filepath.Join("internal", "db", "migrate", "000001_initial_schema.up.sql")
-	schemaBytes, err := os.ReadFile(migrationPath)
-	if err != nil {
-		return fmt.Errorf("read migration file: %w", err)
+	migrations := []string{
+		"000001_initial_schema.up.sql",
+		"000002_failed_tasks.up.sql",
+		"000003_tasks_retry_count_index.up.sql",
+		"000004_scheduled_jobs.up.sql",
 	}
 
-	if _, err := pool.Exec(ctx, string(schemaBytes)); err != nil {
-		return fmt.Errorf("exec migration schema: %w", err)
+	for _, migration := range migrations {
+		migrationPath := filepath.Join("internal", "db", "migrate", migration)
+		schemaBytes, err := os.ReadFile(migrationPath)
+		if err != nil {
+			return fmt.Errorf("read migration file %s: %w", migration, err)
+		}
+
+		if _, err := pool.Exec(ctx, string(schemaBytes)); err != nil {
+			return fmt.Errorf("exec migration %s: %w", migration, err)
+		}
 	}
 
 	return nil
