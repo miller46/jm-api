@@ -132,3 +132,29 @@ func TestCSRF_BlocksPOSTWithMissingHeader(t *testing.T) {
 
 	assert.Equal(t, http.StatusForbidden, rr.Code)
 }
+
+func TestCSRF_AllowsPOSTWithBearerTokenWithoutCSRFToken(t *testing.T) {
+	handler := CSRF(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("POST", "/", nil)
+	req.Header.Set("Authorization", "Bearer access-token")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+}
+
+func TestCSRF_BlocksPOSTWithMalformedBearerPrefixAndNoCSRFToken(t *testing.T) {
+	handler := CSRF(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("should not reach handler")
+	}))
+
+	req := httptest.NewRequest("POST", "/", nil)
+	req.Header.Set("Authorization", "Bearer")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+}
