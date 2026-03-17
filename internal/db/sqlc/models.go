@@ -33,6 +33,21 @@ type FailedTask struct {
 	CreateAt       time.Time   `json:"create_at"`
 }
 
+type ScheduledJob struct {
+	ID             pgtype.UUID `json:"id"`
+	Name           string      `json:"name"`
+	Description    pgtype.Text `json:"description"`
+	JobType        string      `json:"job_type"`
+	Payload        []byte      `json:"payload"`
+	CronExpression string      `json:"cron_expression"`
+	NextRunAt      *time.Time  `json:"next_run_at"`
+	LastRunAt      *time.Time  `json:"last_run_at"`
+	Enabled        bool        `json:"enabled"`
+	LastError      pgtype.Text `json:"last_error"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
+}
+
 type SessionToken struct {
 	TokenJti       string      `json:"token_jti"`
 	UserID         string      `json:"user_id"`

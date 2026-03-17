@@ -257,6 +257,7 @@ func (s *Server) setupRoutes() {
 	botH := handler.NewBotHandler(s.queries, s.webhookSvc)
 	webhookH := handler.NewWebhookHandler(s.queries, s.webhookSvc)
 	taskH := handler.NewTaskHandler(s.queries)
+	scheduledJobH := handler.NewScheduledJobHandler(s.queries)
 
 	// Auth middleware
 	authMW := middleware.Auth(cfg.JWTSigningKeys)
@@ -309,6 +310,15 @@ func (s *Server) setupRoutes() {
 			r.Post("/break/reset", adminH.ResetBreak)
 			r.Get("/break/status", adminH.BreakStatus)
 			r.Get("/circuit-breakers", adminH.CircuitBreakerStatus)
+
+			// Scheduled jobs
+			r.Route("/scheduled-jobs", func(r chi.Router) {
+				r.Get("/", scheduledJobH.List)
+				r.Post("/", scheduledJobH.Create)
+				r.Get("/{id}", scheduledJobH.Get)
+				r.Patch("/{id}", scheduledJobH.Update)
+				r.Delete("/{id}", scheduledJobH.Delete)
+			})
 		})
 
 		// Bots - reads are public
