@@ -79,6 +79,9 @@
     document.getElementById('modal-save').addEventListener('click', saveJob);
     document.getElementById('modal-delete').addEventListener('click', deleteJob);
 
+    // Cron builder events
+    bindCronBuilderEvents();
+
     // Close modal on overlay click
     jobModal.addEventListener('click', function(e) {
       if (e.target === jobModal) {
@@ -92,6 +95,161 @@
         closeModal();
       }
     });
+  }
+
+  /**
+   * Bind cron builder event listeners
+   */
+  function bindCronBuilderEvents() {
+    var cronInput = document.getElementById('job-cron');
+    
+    // Tab switching
+    var tabs = document.querySelectorAll('.cron-tab');
+    for (var i = 0; i < tabs.length; i++) {
+      tabs[i].addEventListener('click', function() {
+        var tabName = this.getAttribute('data-tab');
+        
+        // Update active tab
+        for (var j = 0; j < tabs.length; j++) {
+          tabs[j].classList.remove('active');
+        }
+        this.classList.add('active');
+        
+        // Update active panel
+        var panels = document.querySelectorAll('.cron-tab-panel');
+        for (var j = 0; j < panels.length; j++) {
+          panels[j].classList.remove('active');
+          if (panels[j].getAttribute('data-panel') === tabName) {
+            panels[j].classList.add('active');
+          }
+        }
+      });
+    }
+    
+    // Preset buttons
+    var presetBtns = document.querySelectorAll('.cron-preset-btn');
+    for (var i = 0; i < presetBtns.length; i++) {
+      presetBtns[i].addEventListener('click', function() {
+        var cron = this.getAttribute('data-cron');
+        cronInput.value = cron;
+        updateCronPreview(cron);
+        
+        // Update active state
+        for (var j = 0; j < presetBtns.length; j++) {
+          presetBtns[j].classList.remove('active');
+        }
+        this.classList.add('active');
+        
+        // Sync custom fields
+        syncCustomFieldsFromCron(cron);
+      });
+    }
+    
+    // Custom field changes
+    var customFields = ['cron-minute', 'cron-hour', 'cron-day', 'cron-month', 'cron-dow'];
+    for (var i = 0; i < customFields.length; i++) {
+      var field = document.getElementById(customFields[i]);
+      if (field) {
+        field.addEventListener('change', function() {
+          buildCronFromCustomFields();
+        });
+      }
+    }
+    
+    // Cron input typing
+    cronInput.addEventListener('input', function() {
+      updateCronPreview(this.value);
+      syncCustomFieldsFromCron(this.value);
+      updatePresetActiveState(this.value);
+    });
+  }
+
+  /**
+   * Build cron expression from custom field values
+   */
+  function buildCronFromCustomFields() {
+    var minute = document.getElementById('cron-minute').value;
+    var hour = document.getElementById('cron-hour').value;
+    var day = document.getElementById('cron-day').value;
+    var month = document.getElementById('cron-month').value;
+    var dow = document.getElementById('cron-dow').value;
+    
+    var cron = [minute, hour, day, month, dow].join(' ');
+    document.getElementById('job-cron').value = cron;
+    updateCronPreview(cron);
+    updatePresetActiveState(cron);
+  }
+
+  /**
+   * Sync custom fields from cron expression
+   */
+  function syncCustomFieldsFromCron(cron) {
+    var parts = cron.trim().split(/\s+/);
+    if (parts.length !== 5) return;
+    
+    setSelectValue('cron-minute', parts[0]);
+    setSelectValue('cron-hour', parts[1]);
+    setSelectValue('cron-day', parts[2]);
+    setSelectValue('cron-month', parts[3]);
+    setSelectValue('cron-dow', parts[4]);
+  }
+
+  /**
+   * Set select value if it exists
+   */
+  function setSelectValue(id, value) {
+    var select = document.getElementById(id);
+    if (!select) return;
+    
+    // Check if option exists
+    var optionExists = false;
+    for (var i = 0; i < select.options.length; i++) {
+      if (select.options[i].value === value) {
+        optionExists = true;
+        break;
+      }
+    }
+    
+    if (optionExists) {
+      select.value = value;
+    }
+  }
+
+  /**
+   * Update which preset button is active
+   */
+  function updatePresetActiveState(cron) {
+    var presetBtns = document.querySelectorAll('.cron-preset-btn');
+    for (var i = 0; i < presetBtns.length; i++) {
+      presetBtns[i].classList.remove('active');
+      if (presetBtns[i].getAttribute('data-cron') === cron) {
+        presetBtns[i].classList.add('active');
+      }
+    }
+  }
+
+  /**
+   * Update cron preview display
+   */
+  function updateCronPreview(cron) {
+    var previewEl = document.getElementById('cron-preview');
+    var validityEl = document.getElementById('cron-validity');
+    var humanReadableEl = document.getElementById('cron-human-readable');
+    
+    if (!isValidCron(cron)) {
+      previewEl.classList.add('invalid');
+      validityEl.textContent = '✗ Invalid cron expression';
+      validityEl.className = 'cron-invalid';
+      humanReadableEl.textContent = 'Please enter a valid cron (e.g., 0 0 * * *)';
+      return;
+    }
+    
+    previewEl.classList.remove('invalid');
+    validityEl.textContent = '✓ Valid cron expression';
+    validityEl.className = 'cron-valid';
+    
+    var description = getCronDescription(cron);
+    humanReadableEl.textContent = description || cron;
   }
 
   /**
@@ -345,6 +503,11 @@
       } else {
         document.getElementById('job-next-run').value = '';
       }
+      
+      // Initialize cron builder
+      updateCronPreview(job.cron_expression || '');
+      syncCustomFieldsFromCron(job.cron_expression || '');
+      updatePresetActiveState(job.cron_expression || '');
     } else {
       modalTitle.textContent = 'New Job';
       deleteBtn.style.display = 'none';
@@ -352,6 +515,12 @@
       // Clear form
       jobForm.reset();
       document.getElementById('job-enabled').checked = true;
+      document.getElementById('job-cron').value = '0 0 * * *';
+      
+      // Initialize cron builder with default
+      updateCronPreview('0 0 * * *');
+      syncCustomFieldsFromCron('0 0 * * *');
+      updatePresetActiveState('0 0 * * *');
     }
 
     jobModal.classList.add('visible');
@@ -458,6 +627,183 @@
       errorEl.textContent = message;
       errorEl.style.display = 'block';
     }
+  }
+
+  /**
+   * Check if a cron expression is valid
+   */
+  function isValidCron(cron) {
+    if (!cron || typeof cron !== 'string') return false;
+    
+    var parts = cron.trim().split(/\s+/);
+    if (parts.length !== 5) {
+      return false;
+    }
+    
+    var ranges = [
+      { min: 0, max: 59 },   // minute
+      { min: 0, max: 23 },   // hour
+      { min: 1, max: 31 },   // day of month
+      { min: 1, max: 12 },   // month
+      { min: 0, max: 7 }     // day of week
+    ];
+    
+    for (var i = 0; i < 5; i++) {
+      if (!isValidCronField(parts[i], ranges[i].min, ranges[i].max)) {
+        return false;
+      }
+    }
+    
+    return true;
+  }
+
+  /**
+   * Validate a single cron field
+   */
+  function isValidCronField(field, min, max) {
+    if (field === '*') {
+      return true;
+    }
+    
+    // Handle step values (e.g., */5, 1-10/2)
+    if (field.indexOf('/') !== -1) {
+      var stepParts = field.split('/');
+      if (stepParts.length !== 2) {
+        return false;
+      }
+      var step = parseInt(stepParts[1], 10);
+      if (isNaN(step) || step < 1) {
+        return false;
+      }
+      var baseField = stepParts[0];
+      // Base can be * or a range
+      if (baseField === '*') {
+        return true;
+      }
+      if (baseField.indexOf('-') !== -1) {
+        var rangeParts = baseField.split('-');
+        if (rangeParts.length !== 2) {
+          return false;
+        }
+        var start = parseInt(rangeParts[0], 10);
+        var end = parseInt(rangeParts[1], 10);
+        if (isNaN(start) || isNaN(end)) {
+          return false;
+        }
+        if (start < min || end > max || start > end) {
+          return false;
+        }
+        return true;
+      }
+      // Base can also be a single number
+      var baseVal = parseInt(baseField, 10);
+      if (isNaN(baseVal) || baseVal < min || baseVal > max) {
+        return false;
+      }
+      return true;
+    }
+    
+    if (field.indexOf('-') !== -1) {
+      var rangeParts = field.split('-');
+      if (rangeParts.length !== 2) {
+        return false;
+      }
+      var start = parseInt(rangeParts[0], 10);
+      var end = parseInt(rangeParts[1], 10);
+      if (isNaN(start) || isNaN(end)) {
+        return false;
+      }
+      if (start < min || end > max || start > end) {
+        return false;
+      }
+      return true;
+    }
+    
+    if (field.indexOf(',') !== -1) {
+      var values = field.split(',');
+      for (var i = 0; i < values.length; i++) {
+        var val = parseInt(values[i], 10);
+        if (isNaN(val) || val < min || val > max) {
+          return false;
+        }
+      }
+      return true;
+    }
+    
+    var singleVal = parseInt(field, 10);
+    if (isNaN(singleVal)) {
+      return false;
+    }
+    if (min === 0 && max === 7 && singleVal === 7) {
+      return true;
+    }
+    return singleVal >= min && singleVal <= max;
+  }
+
+  /**
+   * Get human-readable description of cron expression
+   */
+  function getCronDescription(cron) {
+    if (!isValidCron(cron)) return null;
+    
+    var parts = cron.trim().split(/\s+/);
+    var minute = parts[0];
+    var hour = parts[1];
+    var dom = parts[2];
+    var month = parts[3];
+    var dow = parts[4];
+    
+    // Every minute
+    if (cron === '* * * * *') {
+      return 'Every minute';
+    }
+    
+    // Every X minutes (e.g., */5)
+    if (minute.indexOf('*/') === 0 && hour === '*' && dom === '*' && month === '*' && dow === '*') {
+      var interval = minute.split('/')[1];
+      return 'Every ' + interval + ' minutes';
+    }
+    
+    // Every hour at specific minute
+    if (minute !== '*' && !isNaN(parseInt(minute, 10)) && parseInt(minute, 10).toString() === minute && hour === '*' && dom === '*' && month === '*' && dow === '*') {
+      return 'Every hour at minute ' + minute;
+    }
+    
+    // Daily at specific time
+    if (dom === '*' && month === '*' && dow === '*' && hour !== '*' && minute !== '*') {
+      var time = formatTime(parseInt(hour, 10), parseInt(minute, 10));
+      return 'Every day at ' + time;
+    }
+    
+    // Weekly on specific day
+    if (dom === '*' && month === '*' && dow !== '*' && dow.indexOf('-') === -1 && dow.indexOf(',') === -1 && dow.indexOf('/') === -1) {
+      var days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      var dayNum = parseInt(dow, 10);
+      var dayName = days[dayNum % 7];
+      var time = formatTime(parseInt(hour, 10), parseInt(minute, 10));
+      return 'Every ' + dayName + ' at ' + time;
+    }
+    
+    // Monthly on specific day
+    if (dom !== '*' && dom.indexOf('-') === -1 && dom.indexOf(',') === -1 && dom.indexOf('/') === -1 && month === '*' && dow === '*') {
+      var time = formatTime(parseInt(hour, 10), parseInt(minute, 10));
+      return 'On day ' + dom + ' of every month at ' + time;
+    }
+    
+    return null;
+  }
+
+  /**
+   * Format hour and minute as readable time
+   */
+  function formatTime(hour, minute) {
+    var period = hour >= 12 ? 'PM' : 'AM';
+    var displayHour = hour % 12;
+    if (displayHour === 0) {
+      displayHour = 12;
+    }
+    var displayMinute = minute < 10 ? '0' + minute : minute;
+    return displayHour + ':' + displayMinute + ' ' + period;
   }
 
   /**
