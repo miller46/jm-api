@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS scheduled_jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Index for efficient calendar queries
-CREATE INDEX idx_scheduled_jobs_next_run_at ON scheduled_jobs(next_run_at);
-CREATE INDEX idx_scheduled_jobs_enabled ON scheduled_jobs(enabled);
+-- Indexes for calendar and scheduler lookups
+CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_next_run_at ON scheduled_jobs(next_run_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled ON scheduled_jobs(enabled);
+CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_due ON scheduled_jobs (next_run_at) WHERE enabled = TRUE;
