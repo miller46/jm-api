@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scheduled Jobs - Admin Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="auth-header">
+    <h1>Scheduled Jobs</h1>
+    <div class="auth-controls">
+      <span class="user-email" id="user-email"></span>
+      <button class="btn-logout" id="logout-btn">Logout</button>
+    </div>
+  </header>
+
+  <main id="scheduled-jobs-page">
+    <div class="page-actions">
+      <a href="index.html" class="btn btn-secondary">&larr; Back to Dashboard</a>
+      <button id="create-job-btn" class="btn btn-primary">+ Create Job</button>
+    </div>
+
+    <div id="loading" class="loading" style="display: block;">
+      Loading scheduled jobs...
+    </div>
+
+    <div id="error" class="error" style="display: none;"></div>
+
+    <div id="jobs-container" class="jobs-container" style="display: none;">
+      <div class="table-wrapper">
+        <div class="table-scroll-container">
+          <table id="jobs-table">
+            <thead id="table-head"></thead>
+            <tbody id="table-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div id="empty-state" class="empty-state" style="display: none;">
+        <p>No scheduled jobs found. Create your first job to get started.</p>
+      </div>
+    </div>
+  </main>
+
+  <!-- Job Modal -->
+  <div id="job-modal" class="modal" style="display: none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modal-title">Create Scheduled Job</h2>
+        <button class="modal-close" id="modal-close-btn" aria-label="Close">&times;</button>
+      </div>
+      <form id="job-form">
+        <div class="modal-body">
+          <input type="hidden" id="job-id" name="id">
+
+          <!-- Name Field -->
+          <div class="form-group">
+            <label for="job-name">Job Name <span class="required">*</span></label>
+            <input type="text" id="job-name" name="name" placeholder="Daily Analytics Report" maxlength="255">
+            <span class="field-error" id="name-error"></span>
+          </div>
+
+          <!-- Description Field -->
+          <div class="form-group">
+            <label for="job-description">Description (Optional)</label>
+            <textarea id="job-description" name="description" rows="3" placeholder="What does this job do?"></textarea>
+            <span class="field-error" id="description-error"></span>
+          </div>
+
+          <!-- Cron Expression Field -->
+          <div class="form-group">
+            <label for="job-cron">
+              Cron Expression <span class="required">*</span>
+              <a href="https://crontab.guru" target="_blank" rel="noopener" class="help-link" title="Open crontab.guru reference">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
+                  <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                </svg>
+              </a>
+            </label>
+            <input type="text" id="job-cron" name="cron_expression" placeholder="0 2 * * *">
+            <span class="field-error" id="cron-error"></span>
+            
+            <!-- Cron Helper -->
+            <div id="cron-helper" class="cron-helper" style="display: none;">
+              <div class="cron-status" id="cron-status"></div>
+              <div class="cron-human-readable" id="cron-human-readable"></div>
+              <div class="cron-next-runs" id="cron-next-runs"></div>
+            </div>
+          </div>
+
+          <!-- Payload Field -->
+          <div class="form-group">
+            <label for="job-payload">Payload (JSON)</label>
+            <textarea id="job-payload" name="payload" rows="6" placeholder="{}" spellcheck="false">{}</textarea>
+            <span class="field-error" id="payload-error"></span>
+          </div>
+
+          <!-- Enabled Toggle -->
+          <div class="form-group form-group-toggle">
+            <label class="toggle-label">
+              <input type="checkbox" id="job-enabled" name="enabled" checked>
+              <span class="toggle-switch"></span>
+              <span class="toggle-text">Enabled</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-footer" id="modal-footer-create">
+          <button type="button" class="btn btn-secondary" id="cancel-btn">Cancel</button>
+          <button type="button" class="btn btn-secondary" id="create-run-btn">Create & Run Now</button>
+          <button type="submit" class="btn btn-primary" id="submit-btn">Create Job</button>
+        </div>
+
+        <div class="modal-footer" id="modal-footer-edit" style="display: none;">
+          <button type="button" class="btn btn-secondary" id="cancel-btn-edit">Cancel</button>
+          <button type="button" class="btn btn-danger" id="delete-btn">Delete</button>
+          <button type="button" class="btn btn-secondary" id="run-now-btn">Run Now</button>
+          <button type="submit" class="btn btn-primary" id="save-btn">Save Changes</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Delete Confirmation Modal -->
+  <div id="delete-modal" class="modal modal-small" style="display: none;">
+    <div class="modal-overlay"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Delete Scheduled Job</h2>
+        <button class="modal-close" id="delete-modal-close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>Are you sure you want to delete <strong id="delete-job-name"></strong>?</p>
+        <p class="text-muted">This action cannot be undone.</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="delete-cancel-btn">Cancel</button>
+        <button type="button" class="btn btn-danger" id="delete-confirm-btn">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <script src="app.js"></script>
+  <script src="scheduled-jobs.js"></script>
+</body>
+</html>
