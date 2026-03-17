@@ -33,6 +33,18 @@ type FailedTask struct {
 	CreateAt       time.Time   `json:"create_at"`
 }
 
+type ScheduledJob struct {
+	ID             string    `json:"id"`
+	Name           string    `json:"name"`
+	TaskType       string    `json:"task_type"`
+	TaskPayload    []byte    `json:"task_payload"`
+	CronExpression string    `json:"cron_expression"`
+	NextRunAt      time.Time `json:"next_run_at"`
+	IsEnabled      bool      `json:"is_enabled"`
+	CreateAt       time.Time `json:"create_at"`
+	LastUpdateAt   time.Time `json:"last_update_at"`
+}
+
 type SessionToken struct {
 	TokenJti       string      `json:"token_jti"`
 	UserID         string      `json:"user_id"`

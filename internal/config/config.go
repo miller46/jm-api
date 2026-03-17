@@ -119,6 +119,11 @@ type Config struct {
 	WorkerPollInterval   time.Duration
 	WorkerTaskTimeout    time.Duration
 
+	// Scheduler
+	SchedulerPollIntervalSeconds int
+	SchedulerQueryLimit          int
+	SchedulerWorkerPoolSize      int
+
 	// Circuit Breaker
 	CircuitBreakerEnabled             bool
 	CircuitBreakerMaxRequests         uint32
@@ -225,6 +230,11 @@ func Load() (*Config, error) {
 		WorkerPollInterval:   envDuration("JM_API_WORKER_POLL_INTERVAL", 5*time.Second),
 		WorkerTaskTimeout:    envDuration("JM_API_WORKER_TASK_TIMEOUT", 30*time.Second),
 
+		// Scheduler
+		SchedulerPollIntervalSeconds: envIntFromKeys([]string{"JM_API_SCHEDULER_POLL_INTERVAL_SECONDS", "SCHEDULER_POLL_INTERVAL_SECONDS"}, 30),
+		SchedulerQueryLimit:          envIntFromKeys([]string{"JM_API_SCHEDULER_QUERY_LIMIT", "SCHEDULER_QUERY_LIMIT"}, 10),
+		SchedulerWorkerPoolSize:      envIntFromKeys([]string{"JM_API_SCHEDULER_WORKER_POOL_SIZE", "SCHEDULER_WORKER_POOL_SIZE"}, 5),
+
 		// Circuit Breaker
 		CircuitBreakerEnabled:             envBool("JM_API_CIRCUIT_BREAKER_ENABLED", true),
 		CircuitBreakerMaxRequests:         envUint32("JM_API_CIRCUIT_BREAKER_MAX_REQUESTS", 100),
@@ -319,6 +329,16 @@ func (c *Config) validate() error {
 	}
 	if c.WorkerTaskTimeout <= 0 {
 		return fmt.Errorf("worker task timeout must be > 0")
+	}
+
+	if c.SchedulerPollIntervalSeconds <= 0 {
+		return fmt.Errorf("scheduler poll interval must be > 0")
+	}
+	if c.SchedulerQueryLimit <= 0 {
+		return fmt.Errorf("scheduler query limit must be > 0")
+	}
+	if c.SchedulerWorkerPoolSize <= 0 {
+		return fmt.Errorf("scheduler worker pool size must be > 0")
 	}
 
 	// Validate circuit breaker config

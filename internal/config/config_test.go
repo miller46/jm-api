@@ -294,6 +294,15 @@ func TestLoad_WorkerValidation_InvalidConcurrency(t *testing.T) {
 	assert.Contains(t, err.Error(), "worker max concurrency")
 }
 
+func TestLoad_SchedulerValidation_InvalidPollInterval(t *testing.T) {
+	setEnv(t, "JM_API_DATABASE_URL", "postgres://localhost/test")
+	setEnv(t, "JM_API_SCHEDULER_POLL_INTERVAL_SECONDS", "0")
+
+	_, err := Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scheduler poll interval")
+}
+
 func TestIsProd(t *testing.T) {
 	c := &Config{Environment: "production"}
 	assert.True(t, c.IsProd())
