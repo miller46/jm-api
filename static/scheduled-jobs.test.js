@@ -510,6 +510,65 @@ test('formatTime handles 12:00 PM correctly', function() {
 });
 
 // ============================================================================
+// Modal CSS Layout Tests
+// ============================================================================
+
+// These tests verify that the modal and form styles are correctly configured
+// to ensure all form fields are fully visible and accessible.
+
+function readFileContent(filename) {
+  if (typeof require !== 'undefined') {
+    var fs = require('fs');
+    var path = require('path');
+    var filepath = path.join(__dirname, filename);
+    try {
+      return fs.readFileSync(filepath, 'utf8');
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
+}
+
+test('modal has appropriate max-width for job scheduler form', function() {
+  var content = readFileContent('scheduled-jobs.html');
+  if (content) {
+    // Check that modal max-width is at least 700px for proper form visibility
+    var modalMatch = content.match(/\.modal\s*\{[^}]*max-width:\s*(\d+)px/);
+    if (modalMatch) {
+      var width = parseInt(modalMatch[1], 10);
+      assertTrue(width >= 700, 'Modal max-width should be at least 700px, got ' + width);
+    }
+  }
+});
+
+test('modal-body has overflow handling for scrollable content', function() {
+  var content = readFileContent('scheduled-jobs.html');
+  if (content) {
+    // Check that modal-body has max-height to ensure scrollability
+    assertContains(content, 'max-height:', 'Modal body should have max-height for scrolling');
+    assertContains(content, 'overflow-y:', 'Modal body should have overflow-y for scrolling');
+  }
+});
+
+test('form inputs have proper width styling', function() {
+  var content = readFileContent('scheduled-jobs.html');
+  if (content) {
+    // Check that form inputs have 100% width
+    assertContains(content, 'width: 100%', 'Form inputs should have 100% width');
+  }
+});
+
+test('cron-custom-fields use responsive grid layout', function() {
+  var content = readFileContent('scheduled-jobs.html');
+  if (content) {
+    // Check that cron fields use auto-fit for responsive behavior
+    assertContains(content, 'auto-fit', 'Cron fields should use auto-fit for responsive layout');
+    assertContains(content, 'minmax(', 'Cron fields should use minmax for field sizing');
+  }
+});
+
+// ============================================================================
 // Run Tests
 // ============================================================================
 

@@ -247,10 +247,11 @@
     .modal {
       background: #fff;
       border-radius: 8px;
-      width: 90%;
-      max-width: 500px;
+      width: 95%;
+      max-width: 800px;
       max-height: 90vh;
-      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
     }
 
@@ -419,8 +420,8 @@
 
     .cron-custom-fields {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 1rem;
     }
 
     .cron-field {
@@ -485,13 +486,11 @@
       color: #333;
     }
 
-    /* Modal improvements for spacing */
-    .modal {
-      max-width: 600px;
-    }
-
+    /* Modal body scrollable area */
     .modal-body {
       padding: 1.5rem;
+      max-height: calc(90vh - 140px);
+      overflow-y: auto;
     }
 
     .form-group {
@@ -500,6 +499,24 @@
 
     .form-group:last-child {
       margin-bottom: 0;
+    }
+
+    /* Form input sizing for better visibility */
+    .modal .form-group input[type="text"],
+    .modal .form-group input[type="datetime-local"] {
+      width: 100%;
+      padding: 0.625rem 0.875rem;
+      font-size: 1rem;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      box-sizing: border-box;
+    }
+
+    .modal .form-group input[type="text"]:focus,
+    .modal .form-group input[type="datetime-local"]:focus {
+      outline: none;
+      border-color: #0d6efd;
+      box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
     }
 
     /* Responsive */
