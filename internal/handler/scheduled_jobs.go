@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/robfig/cron/v3"
 
 	"github.com/jack/jm-api-go/internal/db/sqlc"
@@ -27,10 +28,11 @@ const (
 
 type ScheduledJobHandler struct {
 	queries *sqlc.Queries
+	pool    *pgxpool.Pool
 }
 
-func NewScheduledJobHandler(queries *sqlc.Queries) *ScheduledJobHandler {
-	return &ScheduledJobHandler{queries: queries}
+func NewScheduledJobHandler(queries *sqlc.Queries, pool *pgxpool.Pool) *ScheduledJobHandler {
+	return &ScheduledJobHandler{queries: queries, pool: pool}
 }
 
 type ScheduledJobResponse struct {
@@ -225,15 +227,6 @@ func (h *ScheduledJobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for duplicate name
-	existingJob, err := h.queries.GetScheduledJobByName(ctx, req.Name)
-	if err == nil && existingJob.ID.Bytes != [16]byte{} {
-		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-			"error":   ErrDuplicateName,
-			"message": "A job with this name already exists",
-		})
-		return
-	}
 
 	// Calculate next_run_at if not provided
 	nextRunAt := req.NextRunAt
@@ -312,15 +305,6 @@ func (h *ScheduledJobHandler) Update(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		// Check for duplicate name (excluding current job)
-		existingJob, err := h.queries.GetScheduledJobByName(ctx, *req.Name)
-		if err == nil && existingJob.ID.Bytes != uuid.Bytes {
-			writeJSON(w, http.StatusBadRequest, map[string]interface{}{
-				"error":   ErrDuplicateName,
-				"message": "A job with this name already exists",
-			})
-			return
-		}
 	}
 
 	// Validate cron expression if provided
@@ -352,7 +336,7 @@ func (h *ScheduledJobHandler) Update(w http.ResponseWriter, r *http.Request) {
 		params.Name = *req.Name
 	}
 	if req.Description != nil {
-		params.Description = pgtype.Text{String: *req.Description, Valid: *req.Description != ""}
+		params.Description = pgtype.Text{String: *req.Description, Valid: true}
 	}
 	if req.JobType != nil {
 		params.JobType = *req.JobType
@@ -446,21 +430,35 @@ func (h *ScheduledJobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to start transaction"})
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	txQueries := h.queries.WithTx(tx)
+
 	// Create an execution record
-	execution, err := h.queries.CreateScheduledJobExecution(ctx, job.ID)
+	execution, err := txQueries.CreateScheduledJobExecution(ctx, job.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create execution record"})
 		return
 	}
 
 	// Enqueue a task for immediate execution
-	task, err := h.queries.CreateTask(ctx, sqlc.CreateTaskParams{
+	task, err := txQueries.CreateTask(ctx, sqlc.CreateTaskParams{
 		ID:      model.GenerateID(),
 		Type:    job.JobType,
 		Payload: job.Payload,
 	})
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to enqueue task"})
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to commit transaction"})
 		return
 	}
 

@@ -150,6 +150,7 @@ const getScheduledJobForUpdate = `-- name: GetScheduledJobForUpdate :one
 SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
 FROM scheduled_jobs
 WHERE id = $1
+  AND deleted_at IS NULL
 FOR UPDATE
 `
 
@@ -283,15 +284,16 @@ func (q *Queries) PickDueScheduledJobs(ctx context.Context, limit int32) ([]Sche
 
 const updateScheduledJob = `-- name: UpdateScheduledJob :one
 UPDATE scheduled_jobs
-SET name = COALESCE($2, name),
-    description = COALESCE($3, description),
-    job_type = COALESCE($4, job_type),
-    payload = COALESCE($5, payload),
-    cron_expression = COALESCE($6, cron_expression),
-    next_run_at = COALESCE($7, next_run_at),
-    is_enabled = COALESCE($8, is_enabled),
+SET name = $2,
+    description = $3,
+    job_type = $4,
+    payload = $5,
+    cron_expression = $6,
+    next_run_at = $7,
+    is_enabled = $8,
     updated_at = NOW()
 WHERE id = $1
+  AND deleted_at IS NULL
 RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
 `
 

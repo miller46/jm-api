@@ -26,7 +26,7 @@ func TestScheduledJobHandler_List(t *testing.T) {
 	defer db.Close()
 
 	queries := sqlc.New(sqlc.WithQueryTimeout(db, 5))
-	handler := NewScheduledJobHandler(queries)
+	handler := NewScheduledJobHandler(queries, db)
 
 	// Create test jobs
 	ctx := t.Context()
@@ -127,7 +127,7 @@ func TestScheduledJobHandler_Create(t *testing.T) {
 	defer db.Close()
 
 	queries := sqlc.New(sqlc.WithQueryTimeout(db, 5))
-	handler := NewScheduledJobHandler(queries)
+	handler := NewScheduledJobHandler(queries, db)
 
 	t.Run("create job successfully", func(t *testing.T) {
 		nextRun := time.Now().Add(24 * time.Hour)
@@ -288,7 +288,7 @@ func TestScheduledJobHandler_Get(t *testing.T) {
 	defer db.Close()
 
 	queries := sqlc.New(sqlc.WithQueryTimeout(db, 5))
-	handler := NewScheduledJobHandler(queries)
+	handler := NewScheduledJobHandler(queries, db)
 
 	// Create a test job
 	ctx := t.Context()
@@ -349,7 +349,7 @@ func TestScheduledJobHandler_Update(t *testing.T) {
 	defer db.Close()
 
 	queries := sqlc.New(sqlc.WithQueryTimeout(db, 5))
-	handler := NewScheduledJobHandler(queries)
+	handler := NewScheduledJobHandler(queries, db)
 
 	// Create a test job
 	ctx := t.Context()
@@ -386,6 +386,27 @@ func TestScheduledJobHandler_Update(t *testing.T) {
 
 		assert.Equal(t, newName, response.Name)
 		assert.Equal(t, job.ID.String(), response.ID)
+	})
+
+	t.Run("update allows clearing description", func(t *testing.T) {
+		description := ""
+		reqBody := UpdateScheduledJobRequest{
+			Description: &description,
+		}
+
+		body, _ := json.Marshal(reqBody)
+		req := httptest.NewRequest(http.MethodPatch, "/api/v1/admin/scheduled-jobs/"+job.ID.String(), bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		handler.Update(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+
+		var response ScheduledJobResponse
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, "", response.Description)
 	})
 
 	t.Run("update cron expression recalculates next_run_at", func(t *testing.T) {
@@ -457,7 +478,7 @@ func TestScheduledJobHandler_Delete(t *testing.T) {
 	defer db.Close()
 
 	queries := sqlc.New(sqlc.WithQueryTimeout(db, 5))
-	handler := NewScheduledJobHandler(queries)
+	handler := NewScheduledJobHandler(queries, db)
 
 	t.Run("soft delete job successfully", func(t *testing.T) {
 		ctx := t.Context()
@@ -511,7 +532,7 @@ func TestScheduledJobHandler_RunNow(t *testing.T) {
 	defer db.Close()
 
 	queries := sqlc.New(sqlc.WithQueryTimeout(db, 5))
-	handler := NewScheduledJobHandler(queries)
+	handler := NewScheduledJobHandler(queries, db)
 
 	// Create a test job
 	ctx := t.Context()
