@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/jack/jm-api-go/internal/observability"
 )
 
 type RateLimitConfig struct {
@@ -179,8 +182,14 @@ func (rl *RateLimiter) checkRedis(ctx context.Context, key string, limit int, wi
 	pipe.Expire(ctx, redisKey, window)
 	_, err := pipe.Exec(ctx)
 	if err != nil {
-		// On error, allow the request
-		return true, limit - 1, resetAt
+		observability.RecordRedisConnectionFailure("ratelimiter")
+		slog.Error("redis.connection.failed",
+			"timestamp", now.UTC().Format(time.RFC3339Nano),
+			"error", err.Error(),
+			"stage", "ratelimiter",
+			"fallback", "in_memory",
+		)
+		return rl.checkMemory(key, limit, window, now, resetAt)
 	}
 
 	count := int(incrCmd.Val())

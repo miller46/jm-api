@@ -150,7 +150,7 @@ func TestRateLimiter_WindowRefill_AllowsAfterReset(t *testing.T) {
 	assert.Equal(t, http.StatusOK, refillRR.Code)
 }
 
-func TestRateLimiter_RedisUnavailable_FailsOpen(t *testing.T) {
+func TestRateLimiter_RedisUnavailable_FallsBackToMemory(t *testing.T) {
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:         "127.0.0.1:0",
 		DialTimeout:  5 * time.Millisecond,
@@ -160,16 +160,20 @@ func TestRateLimiter_RedisUnavailable_FailsOpen(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = redisClient.Close() })
 
-	rl := NewRateLimiter(redisClient, RateLimitConfig{PerMinute: 1})
+	rl := NewRateLimiter(redisClient, RateLimitConfig{PerMinute: 1, Window: 5 * time.Second})
 	handler := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 
-	for i := 0; i < 3; i++ {
-		req := httptest.NewRequest("GET", "/", nil)
-		req.RemoteAddr = "8.8.8.8:1234"
-		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, req)
-		assert.Equal(t, http.StatusOK, rr.Code)
-	}
+	allowedReq := httptest.NewRequest("GET", "/", nil)
+	allowedReq.RemoteAddr = "8.8.8.8:1234"
+	allowedRes := httptest.NewRecorder()
+	handler.ServeHTTP(allowedRes, allowedReq)
+	assert.Equal(t, http.StatusOK, allowedRes.Code)
+
+	blockedReq := httptest.NewRequest("GET", "/", nil)
+	blockedReq.RemoteAddr = "8.8.8.8:1234"
+	blockedRes := httptest.NewRecorder()
+	handler.ServeHTTP(blockedRes, blockedReq)
+	assert.Equal(t, http.StatusTooManyRequests, blockedRes.Code)
 }
