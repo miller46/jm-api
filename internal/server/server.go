@@ -318,6 +318,7 @@ func (s *Server) setupRoutes() {
 				r.Get("/{id}", scheduledJobH.Get)
 				r.Patch("/{id}", scheduledJobH.Update)
 				r.Delete("/{id}", scheduledJobH.Delete)
+				r.Post("/{id}/run-now", scheduledJobH.RunNow)
 			})
 		})
 

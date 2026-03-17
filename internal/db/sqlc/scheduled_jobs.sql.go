@@ -15,7 +15,8 @@ import (
 
 const countScheduledJobs = `-- name: CountScheduledJobs :one
 SELECT COUNT(*) FROM scheduled_jobs
-WHERE ($1::boolean IS NULL OR is_enabled = $1::boolean)
+WHERE deleted_at IS NULL
+  AND ($1::boolean IS NULL OR is_enabled = $1::boolean)
   AND ($2::text IS NULL OR name ILIKE '%' || $2::text || '%')
 `
 
@@ -34,7 +35,7 @@ func (q *Queries) CountScheduledJobs(ctx context.Context, arg CountScheduledJobs
 const createScheduledJob = `-- name: CreateScheduledJob :one
 INSERT INTO scheduled_jobs (name, description, job_type, payload, cron_expression, next_run_at, is_enabled)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
+RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
 `
 
 type CreateScheduledJobParams struct {
@@ -71,12 +72,17 @@ func (q *Queries) CreateScheduledJob(ctx context.Context, arg CreateScheduledJob
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const deleteScheduledJob = `-- name: DeleteScheduledJob :exec
-DELETE FROM scheduled_jobs WHERE id = $1
+UPDATE scheduled_jobs
+SET deleted_at = NOW(),
+    updated_at = NOW()
+WHERE id = $1
+  AND deleted_at IS NULL
 `
 
 func (q *Queries) DeleteScheduledJob(ctx context.Context, id pgtype.UUID) error {
@@ -85,9 +91,10 @@ func (q *Queries) DeleteScheduledJob(ctx context.Context, id pgtype.UUID) error 
 }
 
 const getScheduledJob = `-- name: GetScheduledJob :one
-SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
+SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
 FROM scheduled_jobs
 WHERE id = $1
+  AND deleted_at IS NULL
 `
 
 func (q *Queries) GetScheduledJob(ctx context.Context, id pgtype.UUID) (ScheduledJob, error) {
@@ -106,12 +113,41 @@ func (q *Queries) GetScheduledJob(ctx context.Context, id pgtype.UUID) (Schedule
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const getScheduledJobByName = `-- name: GetScheduledJobByName :one
+SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
+FROM scheduled_jobs
+WHERE name = $1
+  AND deleted_at IS NULL
+`
+
+func (q *Queries) GetScheduledJobByName(ctx context.Context, name string) (ScheduledJob, error) {
+	row := q.db.QueryRow(ctx, getScheduledJobByName, name)
+	var i ScheduledJob
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.JobType,
+		&i.CronExpression,
+		&i.NextRunAt,
+		&i.Payload,
+		&i.IsEnabled,
+		&i.LastRunAt,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getScheduledJobForUpdate = `-- name: GetScheduledJobForUpdate :one
-SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
+SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
 FROM scheduled_jobs
 WHERE id = $1
 FOR UPDATE
@@ -133,14 +169,16 @@ func (q *Queries) GetScheduledJobForUpdate(ctx context.Context, id pgtype.UUID) 
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listScheduledJobs = `-- name: ListScheduledJobs :many
-SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
+SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
 FROM scheduled_jobs
-WHERE ($1::boolean IS NULL OR is_enabled = $1::boolean)
+WHERE deleted_at IS NULL
+  AND ($1::boolean IS NULL OR is_enabled = $1::boolean)
   AND ($2::text IS NULL OR name ILIKE '%' || $2::text || '%')
 ORDER BY next_run_at ASC NULLS LAST
 LIMIT $4::int
@@ -181,6 +219,7 @@ func (q *Queries) ListScheduledJobs(ctx context.Context, arg ListScheduledJobsPa
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -193,13 +232,14 @@ func (q *Queries) ListScheduledJobs(ctx context.Context, arg ListScheduledJobsPa
 }
 
 const pickDueScheduledJobs = `-- name: PickDueScheduledJobs :many
-SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
+SELECT id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
 FROM scheduled_jobs
 WHERE id IN (
     SELECT id
     FROM scheduled_jobs
     WHERE next_run_at <= NOW()
       AND is_enabled = TRUE
+      AND deleted_at IS NULL
     ORDER BY next_run_at ASC
     LIMIT $1
     FOR UPDATE SKIP LOCKED
@@ -229,6 +269,7 @@ func (q *Queries) PickDueScheduledJobs(ctx context.Context, limit int32) ([]Sche
 			&i.LastError,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.DeletedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -251,7 +292,7 @@ SET name = COALESCE($2, name),
     is_enabled = COALESCE($8, is_enabled),
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
+RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
 `
 
 type UpdateScheduledJobParams struct {
@@ -290,6 +331,7 @@ func (q *Queries) UpdateScheduledJob(ctx context.Context, arg UpdateScheduledJob
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -299,7 +341,7 @@ UPDATE scheduled_jobs
 SET next_run_at = $2,
     updated_at = NOW()
 WHERE id = $1
-RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at
+RETURNING id, name, description, job_type, cron_expression, next_run_at, payload, is_enabled, last_run_at, last_error, created_at, updated_at, deleted_at
 `
 
 type UpdateScheduledJobNextRunAtParams struct {
@@ -323,6 +365,7 @@ func (q *Queries) UpdateScheduledJobNextRunAt(ctx context.Context, arg UpdateSch
 		&i.LastError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
