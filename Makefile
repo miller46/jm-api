@@ -1,8 +1,9 @@
-.PHONY: build test run worker migrate sqlc lint clean
+.PHONY: build test run worker scheduler migrate sqlc lint clean
 
 build:
 	go build -o bin/api ./cmd/api
 	go build -o bin/worker ./cmd/worker
+	go build -o bin/scheduler ./cmd/scheduler
 
 test:
 	go test ./... -v -count=1
@@ -12,6 +13,9 @@ run:
 
 worker:
 	go run ./cmd/worker
+
+scheduler:
+	go run ./cmd/scheduler
 
 migrate-up:
 	migrate -path internal/db/migrate -database "$$JM_API_DATABASE_URL" up
