@@ -20,10 +20,12 @@ RUN curl -L https://github.com/golang-migrate/migrate/releases/download/v4.17.0/
 COPY --from=builder /api /usr/local/bin/api
 COPY --from=builder /worker /usr/local/bin/worker
 COPY --from=builder /app/internal/db/migrate /migrations
+COPY --from=builder /app/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD curl -f http://127.0.0.1:${PORT:-8000}/api/v1/live || exit 1
 
+ENTRYPOINT ["entrypoint.sh"]
 CMD ["api"]

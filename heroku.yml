@@ -1,12 +1,6 @@
 build:
   docker:
     web: Dockerfile
-release:
-  command:
-    - sh
-    - -c
-    - migrate -path /migrations -database ${JM_API_DATABASE_URL:-$DATABASE_URL} up
-  image: web
 run:
   web:
     command:
