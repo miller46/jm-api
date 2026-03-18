@@ -305,20 +305,23 @@ func (s *Server) setupRoutes() {
 		r.Route("/admin", func(r chi.Router) {
 			r.Use(authMW)
 			r.Use(csrfMW)
-			r.Use(middleware.RequireAdmin)
-			r.Post("/break", adminH.TriggerBreak)
-			r.Post("/break/reset", adminH.ResetBreak)
-			r.Get("/break/status", adminH.BreakStatus)
-			r.Get("/circuit-breakers", adminH.CircuitBreakerStatus)
+
+			r.With(middleware.RequireAdmin).Post("/break", adminH.TriggerBreak)
+			r.With(middleware.RequireAdmin).Post("/break/reset", adminH.ResetBreak)
+			r.With(middleware.RequireAdmin).Get("/break/status", adminH.BreakStatus)
+			r.With(middleware.RequireAdmin).Get("/circuit-breakers", adminH.CircuitBreakerStatus)
 
 			// Scheduled jobs
 			r.Route("/scheduled-jobs", func(r chi.Router) {
+				// List/read scheduled jobs for any authenticated user.
 				r.Get("/", scheduledJobH.List)
-				r.Post("/", scheduledJobH.Create)
 				r.Get("/{id}", scheduledJobH.Get)
-				r.Patch("/{id}", scheduledJobH.Update)
-				r.Delete("/{id}", scheduledJobH.Delete)
-				r.Post("/{id}/run-now", scheduledJobH.RunNow)
+
+				// Mutating operations remain admin-only.
+				r.With(middleware.RequireAdmin).Post("/", scheduledJobH.Create)
+				r.With(middleware.RequireAdmin).Patch("/{id}", scheduledJobH.Update)
+				r.With(middleware.RequireAdmin).Delete("/{id}", scheduledJobH.Delete)
+				r.With(middleware.RequireAdmin).Post("/{id}/run-now", scheduledJobH.RunNow)
 			})
 		})
 
