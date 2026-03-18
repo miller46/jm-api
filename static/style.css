@@ -285,7 +285,8 @@ tbody tr:hover {
   margin-bottom: 1.5rem;
 }
 
-.remember-me .checkbox-label {
+/* Use higher specificity to override .auth-container .form-group label */
+.auth-container .remember-me .checkbox-label {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -295,7 +296,7 @@ tbody tr:hover {
   margin-bottom: 0;
 }
 
-.remember-me .checkbox-label input[type="checkbox"] {
+.auth-container .remember-me .checkbox-label input[type="checkbox"] {
   width: auto;
   min-width: 1.1rem;
   height: 1.1rem;
@@ -304,7 +305,7 @@ tbody tr:hover {
   accent-color: #0d6efd;
 }
 
-.remember-me .checkbox-label span {
+.auth-container .remember-me .checkbox-label span {
   line-height: 1.4;
 }
 
