@@ -517,6 +517,9 @@
       document.getElementById('job-enabled').checked = true;
       document.getElementById('job-cron').value = '0 0 * * *';
       
+      // Set default "Next Run At" to current date/time
+      document.getElementById('job-next-run').value = formatDateTimeLocal(new Date());
+      
       // Initialize cron builder with default
       updateCronPreview('0 0 * * *');
       syncCustomFieldsFromCron('0 0 * * *');

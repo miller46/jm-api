@@ -510,6 +510,44 @@ test('formatTime handles 12:00 PM correctly', function() {
 });
 
 // ============================================================================
+// Date Formatting Tests for Next Run At Default
+// ============================================================================
+
+function formatDateTimeLocal(date) {
+  var year = date.getFullYear();
+  var month = String(date.getMonth() + 1).padStart(2, '0');
+  var day = String(date.getDate()).padStart(2, '0');
+  var hours = String(date.getHours()).padStart(2, '0');
+  var minutes = String(date.getMinutes()).padStart(2, '0');
+  return year + '-' + month + '-' + day + 'T' + hours + ':' + minutes;
+}
+
+test('formatDateTimeLocal formats date correctly', function() {
+  var date = new Date(2024, 0, 15, 9, 30); // Jan 15, 2024 09:30
+  assertEqual(formatDateTimeLocal(date), '2024-01-15T09:30');
+});
+
+test('formatDateTimeLocal pads month correctly', function() {
+  var date = new Date(2024, 11, 1, 14, 5); // Dec 1, 2024 14:05
+  assertEqual(formatDateTimeLocal(date), '2024-12-01T14:05');
+});
+
+test('formatDateTimeLocal pads hours correctly', function() {
+  var date = new Date(2024, 5, 10, 5, 0); // June 10, 2024 05:00
+  assertEqual(formatDateTimeLocal(date), '2024-06-10T05:00');
+});
+
+test('formatDateTimeLocal formats midnight correctly', function() {
+  var date = new Date(2024, 0, 1, 0, 0); // Jan 1, 2024 00:00
+  assertEqual(formatDateTimeLocal(date), '2024-01-01T00:00');
+});
+
+test('formatDateTimeLocal formats end of day correctly', function() {
+  var date = new Date(2024, 0, 1, 23, 59); // Jan 1, 2024 23:59
+  assertEqual(formatDateTimeLocal(date), '2024-01-01T23:59');
+});
+
+// ============================================================================
 // Modal CSS Layout Tests
 // ============================================================================
 
