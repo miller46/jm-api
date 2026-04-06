@@ -64,7 +64,7 @@ function getSafeRedirectUrl(searchString) {
   var redirectTo = params.get('redirect');
   
   if (!redirectTo) {
-    return '/';
+    return '/admin/';
   }
   
   // Decode the redirect parameter
@@ -89,19 +89,19 @@ function getSafeRedirectUrl(searchString) {
   }
   
   // Default fallback for unsafe redirects
-  return '/';
+  return '/admin/';
 }
 
-test('returns root path when no redirect param', function() {
-  assertEqual(getSafeRedirectUrl(''), '/', 'Should return / when no redirect param');
+test('returns admin path when no redirect param', function() {
+  assertEqual(getSafeRedirectUrl(''), '/admin/', 'Should return /admin/ when no redirect param');
 });
 
-test('returns root path for empty redirect param', function() {
-  assertEqual(getSafeRedirectUrl('?redirect='), '/', 'Should return / for empty redirect');
+test('returns admin path for empty redirect param', function() {
+  assertEqual(getSafeRedirectUrl('?redirect='), '/admin/', 'Should return /admin/ for empty redirect');
 });
 
-test('returns root path as default fallback', function() {
-  assertEqual(getSafeRedirectUrl('?'), '/', 'Should return / as default');
+test('returns admin path as default fallback', function() {
+  assertEqual(getSafeRedirectUrl('?'), '/admin/', 'Should return /admin/ as default');
 });
 
 test('allows root path redirect', function() {
@@ -125,31 +125,31 @@ test('allows relative path to edit.html', function() {
 });
 
 test('rejects external URL with http protocol', function() {
-  assertEqual(getSafeRedirectUrl('?redirect=http%3A%2F%2Fevil.com'), '/', 'Should reject http://evil.com');
+  assertEqual(getSafeRedirectUrl('?redirect=http%3A%2F%2Fevil.com'), '/admin/', 'Should reject http://evil.com');
 });
 
 test('rejects external URL with https protocol', function() {
-  assertEqual(getSafeRedirectUrl('?redirect=https%3A%2F%2Fevil.com'), '/', 'Should reject https://evil.com');
+  assertEqual(getSafeRedirectUrl('?redirect=https%3A%2F%2Fevil.com'), '/admin/', 'Should reject https://evil.com');
 });
 
 test('rejects protocol-relative URL', function() {
-  assertEqual(getSafeRedirectUrl('?redirect=%2F%2Fevil.com'), '/', 'Should reject //evil.com');
+  assertEqual(getSafeRedirectUrl('?redirect=%2F%2Fevil.com'), '/admin/', 'Should reject //evil.com');
 });
 
 test('rejects path with directory traversal', function() {
-  assertEqual(getSafeRedirectUrl('?redirect=..%2F..%2Fetc%2Fpasswd'), '/', 'Should reject directory traversal');
+  assertEqual(getSafeRedirectUrl('?redirect=..%2F..%2Fetc%2Fpasswd'), '/admin/', 'Should reject directory traversal');
 });
 
 test('rejects javascript protocol', function() {
-  assertEqual(getSafeRedirectUrl('?redirect=javascript%3Aalert(1)'), '/', 'Should reject javascript: protocol');
+  assertEqual(getSafeRedirectUrl('?redirect=javascript%3Aalert(1)'), '/admin/', 'Should reject javascript: protocol');
 });
 
 test('rejects non-html file extensions', function() {
-  assertEqual(getSafeRedirectUrl('?redirect=%2Fapi%2Fsecret'), '/', 'Should reject non-html paths');
+  assertEqual(getSafeRedirectUrl('?redirect=%2Fapi%2Fsecret'), '/admin/', 'Should reject non-html paths');
 });
 
 test('rejects data URI', function() {
-  assertEqual(getSafeRedirectUrl('?redirect=data%3Atext%2Fhtml%3Bbase64%2Cxxx'), '/', 'Should reject data: URI');
+  assertEqual(getSafeRedirectUrl('?redirect=data%3Atext%2Fhtml%3Bbase64%2Cxxx'), '/admin/', 'Should reject data: URI');
 });
 
 test('decodes URL-encoded redirect parameter', function() {
