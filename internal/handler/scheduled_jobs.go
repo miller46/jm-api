@@ -116,13 +116,6 @@ func calculateNextRunAt(cronExpression string, from time.Time) (time.Time, error
 func (h *ScheduledJobHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Validate handler is properly initialized
-	if h == nil || h.queries == nil {
-		slog.Error("scheduled job handler not initialized")
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
-		return
-	}
-
 	// Parse query parameters
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
@@ -158,7 +151,7 @@ func (h *ScheduledJobHandler) List(w http.ResponseWriter, r *http.Request) {
 		PerPage: pgtype.Int4{Int32: int32(perPage), Valid: true},
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to list scheduled jobs", "error", err)
+		slog.Error("failed to fetch scheduled jobs", "error", err, "page", page, "perPage", perPage)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch scheduled jobs"})
 		return
 	}
@@ -169,7 +162,7 @@ func (h *ScheduledJobHandler) List(w http.ResponseWriter, r *http.Request) {
 		Search:  search,
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to count scheduled jobs", "error", err)
+		slog.Error("failed to count scheduled jobs", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count scheduled jobs"})
 		return
 	}
@@ -207,6 +200,7 @@ func (h *ScheduledJobHandler) Get(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "scheduled job not found"})
 			return
 		}
+		slog.Error("failed to fetch scheduled job", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch scheduled job"})
 		return
 	}
@@ -275,6 +269,7 @@ func (h *ScheduledJobHandler) Create(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		slog.Error("failed to create scheduled job", "error", err, "name", req.Name)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create scheduled job"})
 		return
 	}
@@ -299,6 +294,7 @@ func (h *ScheduledJobHandler) Update(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "scheduled job not found"})
 			return
 		}
+		slog.Error("failed to fetch scheduled job for update", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch scheduled job"})
 		return
 	}
@@ -385,6 +381,7 @@ func (h *ScheduledJobHandler) Update(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		slog.Error("failed to update scheduled job", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to update scheduled job"})
 		return
 	}
@@ -409,11 +406,13 @@ func (h *ScheduledJobHandler) Delete(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "scheduled job not found"})
 			return
 		}
+		slog.Error("failed to fetch scheduled job for delete", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch scheduled job"})
 		return
 	}
 
 	if err := h.queries.DeleteScheduledJob(ctx, uuid); err != nil {
+		slog.Error("failed to delete scheduled job", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to delete scheduled job"})
 		return
 	}
@@ -439,12 +438,14 @@ func (h *ScheduledJobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "scheduled job not found"})
 			return
 		}
+		slog.Error("failed to fetch scheduled job for run-now", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch scheduled job"})
 		return
 	}
 
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
+		slog.Error("failed to begin transaction for run-now", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to start transaction"})
 		return
 	}
@@ -455,6 +456,7 @@ func (h *ScheduledJobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 	// Create an execution record
 	execution, err := txQueries.CreateScheduledJobExecution(ctx, job.ID)
 	if err != nil {
+		slog.Error("failed to create execution record", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to create execution record"})
 		return
 	}
@@ -466,11 +468,13 @@ func (h *ScheduledJobHandler) RunNow(w http.ResponseWriter, r *http.Request) {
 		Payload: job.Payload,
 	})
 	if err != nil {
+		slog.Error("failed to enqueue task", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to enqueue task"})
 		return
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		slog.Error("failed to commit transaction for run-now", "error", err, "job_id", id)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to commit transaction"})
 		return
 	}
