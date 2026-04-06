@@ -30,7 +30,7 @@ var Auth = {
     var redirectTo = params.get('redirect');
     
     if (!redirectTo) {
-      return '/';
+      return '/admin/';
     }
     
     // Decode the redirect parameter
@@ -55,7 +55,7 @@ var Auth = {
     }
     
     // Default fallback for unsafe redirects
-    return '/';
+    return '/admin/';
   },
 
   // Redirect after successful login (with safe redirect handling)
