@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
@@ -115,6 +116,13 @@ func calculateNextRunAt(cronExpression string, from time.Time) (time.Time, error
 func (h *ScheduledJobHandler) List(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
+	// Validate handler is properly initialized
+	if h == nil || h.queries == nil {
+		slog.Error("scheduled job handler not initialized")
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal server error"})
+		return
+	}
+
 	// Parse query parameters
 	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
 	if page < 1 {
@@ -150,6 +158,7 @@ func (h *ScheduledJobHandler) List(w http.ResponseWriter, r *http.Request) {
 		PerPage: pgtype.Int4{Int32: int32(perPage), Valid: true},
 	})
 	if err != nil {
+		slog.ErrorContext(ctx, "failed to list scheduled jobs", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to fetch scheduled jobs"})
 		return
 	}
@@ -160,6 +169,7 @@ func (h *ScheduledJobHandler) List(w http.ResponseWriter, r *http.Request) {
 		Search:  search,
 	})
 	if err != nil {
+		slog.ErrorContext(ctx, "failed to count scheduled jobs", "error", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count scheduled jobs"})
 		return
 	}
