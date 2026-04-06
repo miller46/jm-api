@@ -20,9 +20,9 @@ import (
 
 // Cron validation error types
 const (
-	ErrInvalidCron  = "invalid_cron"
-	ErrDuplicateName = "duplicate_name"
-	ErrJobNotFound   = "job_not_found"
+	ErrInvalidCron    = "invalid_cron"
+	ErrDuplicateName  = "duplicate_name"
+	ErrJobNotFound    = "job_not_found"
 	ErrInvalidRequest = "invalid_request"
 )
 
@@ -52,7 +52,10 @@ type ScheduledJobResponse struct {
 
 // List response format as per issue requirements
 type ScheduledJobListResponse struct {
-	Jobs       []ScheduledJobResponse `json:"jobs"`
+	// Jobs is kept for existing scheduled-jobs admin calendar clients.
+	Jobs []ScheduledJobResponse `json:"jobs"`
+	// Items provides compatibility with the generic admin table client which expects {items: [...]}.
+	Items      []ScheduledJobResponse `json:"items"`
 	Pagination PaginationInfo         `json:"pagination"`
 }
 
@@ -168,7 +171,8 @@ func (h *ScheduledJobHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, ScheduledJobListResponse{
-		Jobs: items,
+		Jobs:  items,
+		Items: items,
 		Pagination: PaginationInfo{
 			Page:    int32(page),
 			PerPage: int32(perPage),
@@ -226,7 +230,6 @@ func (h *ScheduledJobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-
 
 	// Calculate next_run_at if not provided
 	nextRunAt := req.NextRunAt

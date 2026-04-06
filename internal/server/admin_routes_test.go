@@ -60,3 +60,41 @@ func TestAdminScheduledJobsRoutes_NonAdminCanReadButCannotMutate(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, res.Code)
 	})
 }
+
+func TestScheduledJobsAliasRoutes_NonAdminCanReadButCannotMutate(t *testing.T) {
+	r := chi.NewRouter()
+	authMW := middleware.Auth([]string{testJWTKey})
+	csrfMW := middleware.CSRF
+
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Route("/scheduled_jobs", func(r chi.Router) {
+			r.Use(authMW)
+			r.Use(csrfMW)
+
+			r.Get("/", ok)
+			r.With(middleware.RequireAdmin).Post("/", ok)
+		})
+	})
+
+	t.Run("list jobs via alias is allowed", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/scheduled_jobs", nil)
+		req.Header.Set("Authorization", "Bearer "+newAccessToken(t, false))
+		res := httptest.NewRecorder()
+
+		r.ServeHTTP(res, req)
+		assert.Equal(t, http.StatusOK, res.Code)
+	})
+
+	t.Run("create job via alias is forbidden", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/scheduled_jobs", nil)
+		req.Header.Set("Authorization", "Bearer "+newAccessToken(t, false))
+		res := httptest.NewRecorder()
+
+		r.ServeHTTP(res, req)
+		assert.Equal(t, http.StatusForbidden, res.Code)
+	})
+}

@@ -325,6 +325,23 @@ func (s *Server) setupRoutes() {
 			})
 		})
 
+		// scheduled_jobs alias routes for generic admin table compatibility.
+		// Mirrors /admin/scheduled-jobs access semantics.
+		r.Route("/scheduled_jobs", func(r chi.Router) {
+			r.Use(authMW)
+			r.Use(csrfMW)
+
+			// List/read scheduled jobs for any authenticated user.
+			r.Get("/", scheduledJobH.List)
+			r.Get("/{id}", scheduledJobH.Get)
+
+			// Mutating operations remain admin-only.
+			r.With(middleware.RequireAdmin).Post("/", scheduledJobH.Create)
+			r.With(middleware.RequireAdmin).Patch("/{id}", scheduledJobH.Update)
+			r.With(middleware.RequireAdmin).Delete("/{id}", scheduledJobH.Delete)
+			r.With(middleware.RequireAdmin).Post("/{id}/run-now", scheduledJobH.RunNow)
+		})
+
 		// Bots - reads are public
 		r.Route("/bots", func(r chi.Router) {
 			r.Use(middleware.RequestTimeout(cfg.RequestTimeoutBotQuery))
